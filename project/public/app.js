@@ -161,43 +161,36 @@ async function loadLocations() {
 
 function applyFilters() {
   const query = elements.searchInput.value.trim().toLowerCase();
-  const stops = query ? state.stops.filter((stop) => searchText(stop).includes(query)) : [...state.stops];
-  const locations = query
-    ? state.locations
-        .filter((location) => locationSearchText(location).includes(query))
-        .map(locationToDirectionItem)
-        .map((item) => ({ item, score: directionScore(item, query) }))
-        .filter((entry) => entry.score > 0)
-        .sort((left, right) => {
-          if (left.score !== right.score) return right.score - left.score;
-          return left.item.title.localeCompare(right.item.title, undefined, { numeric: true });
-        })
-        .slice(0, 8)
-        .map((entry) => entry.item)
-    : [];
 
-  stops.sort(compareStops);
+  const stops = [...state.stops];
+  if (query) {
+    stops.sort((left, right) => {
+      const leftMatch = searchText(left).includes(query);
+      const rightMatch = searchText(right).includes(query);
+      if (leftMatch !== rightMatch) return leftMatch ? -1 : 1;
+      return compareStops(left, right);
+    });
+  } else {
+    stops.sort(compareStops);
+  }
 
   state.filteredStops = stops;
-  state.filteredLocations = locations;
+  state.filteredLocations = [];
   renderStopList();
   updateStatus();
 }
 
 function handleSearchInput() {
   applyFilters();
-  if (elements.searchInput.value.trim()) {
-    loadLocations().then(applyFilters);
-  }
 }
 
 function renderStopList() {
-  if (!state.filteredStops.length && !state.filteredLocations.length) {
-    elements.stopList.innerHTML = `<div class="empty-state">No stops or campus locations match your search.</div>`;
+  if (!state.filteredStops.length) {
+    elements.stopList.innerHTML = `<div class="empty-state">No stops match your search.</div>`;
     return;
   }
 
-  elements.stopList.replaceChildren(...state.filteredLocations.map(renderLocationSearchCard), ...state.filteredStops.map(renderStopCard));
+  elements.stopList.replaceChildren(...state.filteredStops.map(renderStopCard));
 }
 
 function renderLocationSearchCard(item) {
@@ -1694,7 +1687,6 @@ async function loadStops() {
       await openDirectionsView({ pushHistory: false, scroll: true });
       return;
     }
-    loadLocations().then(applyFilters);
     const routeKey = routeKeyFromHash();
     if (routeKey) await restoreRouteFromKey(routeKey, { scroll: true });
   } catch (error) {
