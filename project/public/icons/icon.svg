@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">NUS Bus Arrivals</title>
+  <desc id="desc">A teal bus app icon with a shared N for NUS and NB.</desc>
+  <rect width="512" height="512" rx="104" fill="#0f766e"/>
+  <rect x="28" y="28" width="456" height="456" rx="82" fill="none" stroke="#58bbb2" stroke-width="10" opacity=".55"/>
+  <g transform="translate(74 262)">
+    <path d="M23 41c0-23 18-41 41-41h180c24 0 44 17 49 40l15 69h25c13 0 24 11 24 24v31c0 16-13 29-29 29H31c-17 0-31-14-31-31V64c0-13 10-23 23-23z" fill="#fff"/>
+    <path d="M64 36h45v58H64zm70 0h45v58h-45zm70 0h39c12 0 22 8 25 20l8 38h-72z" fill="#0b3f3a"/>
+    <path d="M313 125h42v36h-42zM0 125h37v36H0z" fill="#d8efea"/>
+    <circle cx="91" cy="193" r="36" fill="#0b3f3a"/>
+    <circle cx="91" cy="193" r="21" fill="#fff"/>
+    <circle cx="258" cy="193" r="36" fill="#0b3f3a"/>
+    <circle cx="258" cy="193" r="21" fill="#fff"/>
+  </g>
+</svg>

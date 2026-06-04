@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0f766e">
+    <meta name="description" content="A minimal NUS bus arrivals viewer.">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="NUS Bus">
+    <title>NUS Bus Arrivals</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app">
+      <header class="app-header">
+        <button id="homeButton" class="brand" type="button" aria-label="Reset and return to all stops">
+          <span class="logo" aria-hidden="true">
+            <img src="/icons/icon.svg" alt="">
+          </span>
+          <div>
+            <h1>NUS Bus Arrivals</h1>
+            <p id="loadStatus">Loading stops...</p>
+          </div>
+        </button>
+
+        <div class="controls">
+          <label class="search">
+            <span>Search</span>
+            <input id="searchInput" type="search" autocomplete="off" placeholder="CLB, UTown, Kent Ridge...">
+          </label>
+          <button id="locationButton" class="small-button" type="button">Use Location</button>
+        </div>
+
+        <section id="installPrompt" class="install-prompt" hidden aria-label="Install app">
+          <div>
+            <strong id="installTitle">Use it like a bus app</strong>
+            <p id="installText">Add it to your home screen for quick access.</p>
+          </div>
+          <button id="installButton" class="small-button" type="button">Add</button>
+          <button id="installDismiss" class="dismiss-button" type="button" aria-label="Dismiss install prompt">×</button>
+        </section>
+      </header>
+
+      <section class="stops-section" aria-label="Bus stops">
+        <div id="stopList" class="stop-list"></div>
+      </section>
+
+      <section id="routeView" class="route-view" hidden aria-live="polite">
+        <header class="route-view-header">
+          <span id="routeBadge" class="route-badge"></span>
+          <div>
+            <h2 id="routeTitle"></h2>
+            <p id="routeMeta"></p>
+          </div>
+        </header>
+        <div id="routeBody" class="route-body"></div>
+      </section>
+
+      <footer class="app-footer" aria-labelledby="aboutTitle">
+        <h2 id="aboutTitle">About</h2>
+        <p>
+          Bus stop, route, and arrival data are provided by
+          <a href="https://nusbus.com/" target="_blank" rel="noopener noreferrer">nusbus.com</a>
+          through their API.
+        </p>
+      </footer>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
