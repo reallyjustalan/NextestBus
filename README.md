@@ -20,9 +20,11 @@ The frontend currently uses:
 GET /stops
 GET /stops/:stopId
 GET /services/:serviceKey
+GET /directions?fromStopId=...&toStopId=...
+GET /api/locations
 ```
 
-The route data can also be embedded inside stop arrival responses, so the app merges service data from `/services/:serviceKey` with service data found while loading stops.
+The route data can also be embedded inside stop arrival responses, so the app merges service data from `/services/:serviceKey` with service data found while loading stops. `/api/locations` returns the local `project/public/data/nus-map-locations.json` dataset for directions autocomplete and nearest-stop resolution. That file is generated from the NUS campus map autocomplete endpoint at `https://map.nus.edu.sg/index.php/search/ajax_auto`; map-provided bus stop records, lecture theatres, and classroom-like seminar/tutorial records are excluded because the app already loads bus stops from the NUSBus API and directions autocomplete should target campus places rather than class venues.
 
 ## Project Layout
 

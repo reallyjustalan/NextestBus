@@ -17,22 +17,37 @@
   <body>
     <main class="app">
       <header class="app-header">
-        <button id="homeButton" class="brand" type="button" aria-label="Reset and return to all stops">
-          <span class="logo" aria-hidden="true">
-            <img src="/icons/icon.svg" alt="">
-          </span>
-          <div>
-            <h1>NUS Bus Arrivals</h1>
-            <p id="loadStatus">Loading stops...</p>
-          </div>
-        </button>
+        <div class="header-top">
+          <button id="homeButton" class="brand" type="button" aria-label="Reset and return to all stops">
+            <span class="logo" aria-hidden="true">
+              <img src="/icons/icon.svg" alt="">
+            </span>
+            <div>
+              <h1>NUS Bus Arrivals</h1>
+              <p id="loadStatus">Loading stops...</p>
+            </div>
+          </button>
+          <nav class="header-nav" aria-label="Primary">
+            <button id="mainPageHeaderLink" class="header-link" type="button">Stops</button>
+            <button id="directionsHeaderLink" class="header-link" type="button">Directions</button>
+          </nav>
+        </div>
 
         <div class="controls">
           <label class="search">
             <span>Search</span>
             <input id="searchInput" type="search" autocomplete="off" placeholder="CLB, UTown, Kent Ridge...">
           </label>
-          <button id="locationButton" class="small-button" type="button">Use Location</button>
+          <button id="locationButton" class="icon-button gps-button" type="button" aria-label="Use current location">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M12 2v3"></path>
+              <path d="M12 19v3"></path>
+              <path d="M2 12h3"></path>
+              <path d="M19 12h3"></path>
+              <circle cx="12" cy="12" r="8"></circle>
+            </svg>
+          </button>
         </div>
 
         <section id="installPrompt" class="install-prompt" hidden aria-label="Install app">
@@ -58,6 +73,41 @@
           </div>
         </header>
         <div id="routeBody" class="route-body"></div>
+      </section>
+
+      <section id="directionsView" class="directions-view" hidden aria-live="polite">
+        <header class="directions-header">
+          <div>
+            <h2>Directions</h2>
+            <p>Find the best campus-bus route between stops or NUS venues.</p>
+          </div>
+        </header>
+
+        <form id="directionsForm" class="directions-form" autocomplete="off">
+          <label class="direction-field">
+            <span>From</span>
+            <input id="directionsFromInput" type="search" autocomplete="off" placeholder="Venue or bus stop">
+          </label>
+          <button id="directionsCurrentLocationButton" class="icon-button directions-gps-button" type="button" aria-label="Suggest nearby locations from current location">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M12 2v3"></path>
+              <path d="M12 19v3"></path>
+              <path d="M2 12h3"></path>
+              <path d="M19 12h3"></path>
+              <circle cx="12" cy="12" r="8"></circle>
+            </svg>
+          </button>
+          <label class="direction-field">
+            <span>To</span>
+            <input id="directionsToInput" type="search" autocomplete="off" placeholder="Venue or bus stop">
+          </label>
+          <button id="directionsSwapButton" class="swap-button" type="button" aria-label="Swap start and destination">⇅</button>
+          <button id="directionsSubmitButton" class="small-button directions-submit-button" type="submit">Find Route</button>
+        </form>
+
+        <div id="directionsResult" class="directions-result"></div>
+        <div id="directionsSuggestions" class="directions-suggestions" hidden></div>
       </section>
 
       <footer class="app-footer" aria-labelledby="aboutTitle">

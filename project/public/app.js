@@ -3,10 +3,13 @@ const PINNED_STOPS_KEY = "nusbus-pinned-stops";
 const INSTALL_PROMPT_DISMISSED_KEY = "nusbus-install-prompt-dismissed";
 const REFRESH_INTERVAL_MS = 30000;
 const FRESHNESS_TICK_MS = 5000;
+const LOCATIONS_SOURCE = "https://map.nus.edu.sg/index.php/search/ajax_auto";
 
 const state = {
   stops: [],
   filteredStops: [],
+  filteredLocations: [],
+  locations: [],
   pinnedStopIds: loadPinnedStopIds(),
   openStopId: "",
   arrivalsByStop: new Map(),
@@ -14,6 +17,16 @@ const state = {
   loadingStopId: "",
   sortOrigin: null,
   activeRouteKey: "",
+  activeDirectionsField: "from",
+  directionsFromItem: null,
+  directionsToItem: null,
+  directionsResult: null,
+  directionsError: "",
+  directionsLoading: false,
+  directionsAutoSubmitTimer: null,
+  directionsLastRequestKey: "",
+  isLoadingLocations: false,
+  locationsLoadPromise: null,
   lastUpdatedAt: null,
   isRefreshing: false
 };
@@ -30,6 +43,8 @@ const elements = {
   appHeader: document.querySelector(".app-header"),
   controls: document.querySelector(".controls"),
   homeButton: document.getElementById("homeButton"),
+  mainPageHeaderLink: document.getElementById("mainPageHeaderLink"),
+  directionsHeaderLink: document.getElementById("directionsHeaderLink"),
   installPrompt: document.getElementById("installPrompt"),
   installTitle: document.getElementById("installTitle"),
   installText: document.getElementById("installText"),
@@ -42,7 +57,16 @@ const elements = {
   routeBadge: document.getElementById("routeBadge"),
   routeTitle: document.getElementById("routeTitle"),
   routeMeta: document.getElementById("routeMeta"),
-  routeBody: document.getElementById("routeBody")
+  routeBody: document.getElementById("routeBody"),
+  directionsView: document.getElementById("directionsView"),
+  directionsForm: document.getElementById("directionsForm"),
+  directionsFromInput: document.getElementById("directionsFromInput"),
+  directionsToInput: document.getElementById("directionsToInput"),
+  directionsSwapButton: document.getElementById("directionsSwapButton"),
+  directionsCurrentLocationButton: document.getElementById("directionsCurrentLocationButton"),
+  directionsSubmitButton: document.getElementById("directionsSubmitButton"),
+  directionsSuggestions: document.getElementById("directionsSuggestions"),
+  directionsResult: document.getElementById("directionsResult")
 };
 
 async function apiGet(path, query = {}) {
@@ -92,24 +116,116 @@ function searchText(stop) {
     .toLowerCase();
 }
 
+function locationSearchText(location) {
+  return [
+    location.id,
+    location.title,
+    location.roomName,
+    location.placeCode,
+    location.buildingName,
+    location.streetName,
+    location.postal,
+    location.categoryLabel,
+    location.category,
+    location.campusName
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+async function loadLocations() {
+  if (state.locations.length) return state.locations;
+  if (state.locationsLoadPromise) return state.locationsLoadPromise;
+
+  state.isLoadingLocations = true;
+  state.locationsLoadPromise = (async () => {
+    const data = await fetchJson(new URL("/api/locations", window.location.origin));
+    if (data.source !== LOCATIONS_SOURCE) {
+      throw new Error("Location dataset is stale. Refresh the app to load the NUS campus map locations.");
+    }
+    state.locations = data.locations || [];
+    return state.locations;
+  })();
+
+  try {
+    return await state.locationsLoadPromise;
+  } catch (error) {
+    state.directionsError = error.message || "Could not load locations.";
+    return [];
+  } finally {
+    state.isLoadingLocations = false;
+    state.locationsLoadPromise = null;
+  }
+}
+
 function applyFilters() {
   const query = elements.searchInput.value.trim().toLowerCase();
   const stops = query ? state.stops.filter((stop) => searchText(stop).includes(query)) : [...state.stops];
+  const locations = query
+    ? state.locations
+        .filter((location) => locationSearchText(location).includes(query))
+        .map(locationToDirectionItem)
+        .map((item) => ({ item, score: directionScore(item, query) }))
+        .filter((entry) => entry.score > 0)
+        .sort((left, right) => {
+          if (left.score !== right.score) return right.score - left.score;
+          return left.item.title.localeCompare(right.item.title, undefined, { numeric: true });
+        })
+        .slice(0, 8)
+        .map((entry) => entry.item)
+    : [];
 
   stops.sort(compareStops);
 
   state.filteredStops = stops;
+  state.filteredLocations = locations;
   renderStopList();
   updateStatus();
 }
 
+function handleSearchInput() {
+  applyFilters();
+  if (elements.searchInput.value.trim()) {
+    loadLocations().then(applyFilters);
+  }
+}
+
 function renderStopList() {
-  if (!state.filteredStops.length) {
-    elements.stopList.innerHTML = `<div class="empty-state">No stops match your search.</div>`;
+  if (!state.filteredStops.length && !state.filteredLocations.length) {
+    elements.stopList.innerHTML = `<div class="empty-state">No stops or campus locations match your search.</div>`;
     return;
   }
 
-  elements.stopList.replaceChildren(...state.filteredStops.map(renderStopCard));
+  elements.stopList.replaceChildren(...state.filteredLocations.map(renderLocationSearchCard), ...state.filteredStops.map(renderStopCard));
+}
+
+function renderLocationSearchCard(item) {
+  const card = document.createElement("article");
+  card.className = "stop-card location-card";
+  card.dataset.locationItemId = item.id;
+
+  const nearestStop = routableStopForItem(item);
+  const nearestText = nearestStop ? `Nearest stop: ${nearestStop.title}` : "No nearby routable stop found";
+
+  card.innerHTML = `
+    <div class="stop-top">
+      <button class="stop-button location-result-button" type="button">
+        <span>
+          <span class="stop-title-line">
+            <strong>${escapeHtml(item.title)}</strong>
+            <span class="location-type">${escapeHtml(item.raw?.categoryLabel || locationCategoryLabel(item.raw?.category))}</span>
+          </span>
+          <small>${escapeHtml(item.subtitle || "NUS campus location")}</small>
+        </span>
+      </button>
+    </div>
+    <div class="service-row">
+      <span class="no-services">${escapeHtml(nearestText)}</span>
+    </div>
+  `;
+
+  return card;
 }
 
 function renderStopCard(stop) {
@@ -121,6 +237,7 @@ function renderStopCard(stop) {
   card.className = `stop-card${isOpen ? " is-open" : ""}${isPinned ? " is-pinned" : ""}`;
   const services = renderServiceChips(stop.services || []);
   const distance = state.sortOrigin ? distanceLabel(distanceFromOrigin(stop)) : "";
+  const meta = stopMetaLabel(stop);
 
   card.innerHTML = `
     <div class="stop-top">
@@ -129,7 +246,7 @@ function renderStopCard(stop) {
           <span class="stop-title-line">
             <strong>${escapeHtml(stop.title)}</strong>
           </span>
-          <small>${escapeHtml([stop.busStopCode, stop.subtitle].filter(Boolean).join(" - ") || stop.id)}</small>
+          <small>${escapeHtml(meta || stop.id)}</small>
         </span>
       </button>
       <button class="pin-button" type="button" aria-pressed="${isPinned}" aria-label="${isPinned ? "Unpin" : "Pin"} ${escapeHtml(stop.title)}">
@@ -143,6 +260,21 @@ function renderStopCard(stop) {
 
   if (isOpen) renderArrivalsInto(card.querySelector(".inline-arrivals"), stop.id);
   return card;
+}
+
+function stopMetaLabel(stop) {
+  const code = String(stop.busStopCode || "").trim();
+  let subtitle = String(stop.subtitle || "").trim();
+
+  if (code && subtitle) {
+    const escapedCode = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const leadingCodePattern = new RegExp(`^${escapedCode}\\s*(?:[-•·|,]\\s*)?`, "i");
+    while (leadingCodePattern.test(subtitle)) {
+      subtitle = subtitle.replace(leadingCodePattern, "").trim();
+    }
+  }
+
+  return [code, subtitle].filter(Boolean).join(subtitle ? " • " : "");
 }
 
 function compareStops(left, right) {
@@ -407,7 +539,7 @@ function renderService(service, stopId = "") {
   card.innerHTML = `
     <div class="service-header">
       <span class="route-badge" style="background:${escapeHtml(color)};color:${escapeHtml(text)}">${escapeHtml(service.name)}</span>
-      <span>${escapeHtml(nextStop ? `Towards ${nextStop}` : service.subtitle || "Campus shuttle")}</span>
+      <span>${escapeHtml(nextStop || cleanDirectionLabel(service.subtitle) || "Campus shuttle")}</span>
     </div>
     <div class="arrival-grid">
       ${arrivals.map(renderArrival).join("")}
@@ -422,7 +554,7 @@ function renderArrival(arrival) {
   const vehicle = arrival.vehiclePlate || arrival.meta;
   return `
     <div class="arrival">
-      <strong class="arrival-time ${escapeHtml(loadClass(loadLevel))}">${escapeHtml(arrival.display || minutesLabel(arrival.minutes))}</strong>
+      ${renderEtaChip(arrival.display, arrival.minutes, `arrival-time ${loadClass(loadLevel)}`)}
       <small>${escapeHtml([vehicle, load && `${load} load`].filter(Boolean).join(" - ") || "No vehicle info")}</small>
     </div>
   `;
@@ -437,6 +569,7 @@ async function openRouteView(serviceKey, options = {}) {
   elements.appHeader.hidden = false;
   elements.controls.hidden = true;
   elements.stopsSection.hidden = true;
+  elements.directionsView.hidden = true;
   elements.routeView.hidden = false;
   renderRouteView(entry);
   if (options.loadStopTimings !== false) loadRouteStopTimings(serviceKey);
@@ -456,10 +589,33 @@ function closeRouteView() {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+async function openDirectionsView(options = {}) {
+  elements.appHeader.hidden = false;
+  elements.controls.hidden = true;
+  elements.stopsSection.hidden = true;
+  elements.routeView.hidden = true;
+  elements.directionsView.hidden = false;
+  state.activeRouteKey = "";
+  if (options.pushHistory !== false) history.pushState({ view: "directions" }, "", "#directions");
+  await loadLocations();
+  const restored = await restoreDirectionsFromHash();
+  renderDirectionsSuggestions();
+  renderDirectionsResult();
+  if (restored) elements.directionsSuggestions.hidden = true;
+  if (options.scroll !== false) window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function closeDirectionsView() {
+  elements.directionsView.hidden = true;
+  elements.directionsSuggestions.hidden = true;
+  elements.directionsResult.replaceChildren();
+}
+
 function resetBrowsingExperience() {
   state.openStopId = "";
   state.sortOrigin = null;
   elements.searchInput.value = "";
+  closeDirectionsView();
   closeRouteView();
   applyFilters();
   history.replaceState({ view: "stops" }, "", window.location.pathname);
@@ -473,6 +629,8 @@ async function openStopFromRoute(stopId) {
   state.sortOrigin = null;
   elements.searchInput.value = "";
   elements.routeView.hidden = true;
+  elements.directionsView.hidden = true;
+  elements.directionsSuggestions.hidden = true;
   elements.controls.hidden = false;
   elements.stopsSection.hidden = false;
   elements.routeBody.replaceChildren();
@@ -488,22 +646,68 @@ async function openStopFromRoute(stopId) {
 
 async function handleHistoryChange(event) {
   const historyState = event.state || { view: "stops" };
+  if (historyState.view === "directions" || isDirectionsHash()) {
+    await openDirectionsView({ pushHistory: false, scroll: false });
+    return;
+  }
+
   const serviceKey = historyState.view === "route" ? historyState.serviceKey : routeKeyFromHash();
   if (serviceKey) {
     await restoreRouteFromKey(serviceKey, { scroll: false });
   } else {
+    closeDirectionsView();
     closeRouteView();
   }
 }
 
 async function handleHashChange() {
+  if (isDirectionsHash()) {
+    await openDirectionsView({ pushHistory: false, scroll: true });
+    return;
+  }
+
   const serviceKey = routeKeyFromHash();
   if (serviceKey) {
     await restoreRouteFromKey(serviceKey, { scroll: true });
   } else {
+    closeDirectionsView();
     closeRouteView();
     history.replaceState({ view: "stops" }, "", window.location.pathname);
   }
+}
+
+function isDirectionsHash() {
+  const hash = window.location.hash.replace(/^#/, "");
+  return hash === "directions" || hash.startsWith("directions?");
+}
+
+function directionsHashParams() {
+  const hash = window.location.hash.replace(/^#/, "");
+  if (!hash.startsWith("directions?")) return new URLSearchParams();
+  return new URLSearchParams(hash.slice("directions?".length));
+}
+
+function directionItemById(itemId) {
+  return directionItems().find((item) => item.id === itemId) || null;
+}
+
+async function restoreDirectionsFromHash() {
+  const params = directionsHashParams();
+  const fromId = params.get("from");
+  const toId = params.get("to");
+  if (!fromId || !toId) return false;
+
+  const fromItem = directionItemById(fromId);
+  const toItem = directionItemById(toId);
+  if (!fromItem || !toItem) return false;
+
+  state.directionsFromItem = fromItem;
+  state.directionsToItem = toItem;
+  elements.directionsFromInput.value = fromItem.title;
+  elements.directionsToInput.value = toItem.title;
+  state.activeDirectionsField = "from";
+  await findDirections(null, { pushHistory: false });
+  return true;
 }
 
 function routeKeyFromHash() {
@@ -529,6 +733,509 @@ async function restoreRouteFromKey(serviceKey, options = {}) {
     elements.loadStatus.textContent = error.message || "Could not load route";
     return false;
   }
+}
+
+function directionItems() {
+  return [...state.stops.map(stopToDirectionItem), ...state.locations.map(locationToDirectionItem)];
+}
+
+function stopToDirectionItem(stop) {
+  return {
+    id: `stop:${stop.id}`,
+    type: "stop",
+    title: stop.title,
+    subtitle: [stop.busStopCode && `Stop ${stop.busStopCode}`, stop.subtitle].filter(Boolean).join(" - "),
+    shortLabel: stop.shortLabel || "",
+    services: stop.services || [],
+    coordinates: stopCoordinates(stop),
+    raw: stop
+  };
+}
+
+function locationToDirectionItem(location) {
+  return {
+    id: `venue:${location.id}`,
+    type: "venue",
+    title: location.title || location.id,
+    subtitle: [
+      location.roomName,
+      location.categoryLabel || locationCategoryLabel(location.category),
+      location.campusName,
+      location.coordinates ? "" : "No map location"
+    ]
+      .filter(Boolean)
+      .join(" - "),
+    shortLabel: location.placeCode || location.roomName || "",
+    services: [],
+    coordinates: location.coordinates,
+    raw: location
+  };
+}
+
+function directionInputValue(field) {
+  return field === "from" ? elements.directionsFromInput.value : elements.directionsToInput.value;
+}
+
+function setDirectionInputValue(field, value) {
+  const input = field === "from" ? elements.directionsFromInput : elements.directionsToInput;
+  input.value = value;
+}
+
+function selectedDirectionItem(field) {
+  return field === "from" ? state.directionsFromItem : state.directionsToItem;
+}
+
+function setSelectedDirectionItem(field, item) {
+  if (field === "from") {
+    state.directionsFromItem = item;
+  } else {
+    state.directionsToItem = item;
+  }
+}
+
+function clearDirectionsRequestState() {
+  state.directionsResult = null;
+  state.directionsError = "";
+  state.directionsLastRequestKey = "";
+}
+
+function directionSuggestions(query, limit = 10) {
+  const items = directionItems();
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return items.slice(0, limit);
+
+  return items
+    .map((item) => ({ item, score: directionScore(item, normalized) }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => {
+      if (left.score !== right.score) return right.score - left.score;
+      if (left.item.type !== right.item.type) return left.item.type === "stop" ? -1 : 1;
+      return left.item.title.localeCompare(right.item.title, undefined, { numeric: true });
+    })
+    .slice(0, limit)
+    .map((entry) => entry.item);
+}
+
+function nearbyDirectionSuggestions(origin, limit = 10) {
+  return directionItems()
+    .map((item) => {
+      const distance = item.coordinates ? haversine(origin, item.coordinates) : Number.POSITIVE_INFINITY;
+      return { item, distance };
+    })
+    .filter((entry) => Number.isFinite(entry.distance))
+    .sort((left, right) => {
+      if (left.distance !== right.distance) return left.distance - right.distance;
+      if (left.item.type !== right.item.type) return left.item.type === "stop" ? -1 : 1;
+      return left.item.title.localeCompare(right.item.title, undefined, { numeric: true });
+    })
+    .slice(0, limit)
+    .map((entry) => ({
+      ...entry.item,
+      nearbyDistance: entry.distance,
+      subtitle: `${distanceLabel(entry.distance)} away - ${entry.item.subtitle || (entry.item.type === "venue" ? "NUS campus location" : "Bus stop")}`
+    }));
+}
+
+function directionScore(item, query) {
+  const fields = [
+    [item.title, 900],
+    [item.raw?.id, item.type === "stop" ? 1200 : 760],
+    [item.raw?.busStopCode, 680],
+    [item.raw?.placeCode, 720],
+    [item.raw?.buildingName, 580],
+    [item.raw?.streetName, 320],
+    [item.raw?.postal, 260],
+    [item.raw?.categoryLabel, 180],
+    [item.raw?.category, 120],
+    [item.shortLabel, 460],
+    [item.subtitle, 260],
+    ...item.services.map((service) => [service.name, 140])
+  ];
+  let score = item.type === "stop" ? 20 : 0;
+
+  for (const [field, weight] of fields) {
+    const value = String(field || "").toLowerCase();
+    if (!value) continue;
+    if (value === query) score += weight + 220;
+    else if (value.startsWith(query)) score += weight;
+    else if (value.includes(query)) score += Math.floor(weight * 0.55);
+  }
+
+  return score;
+}
+
+function exactDirectionMatch(query) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return null;
+  return directionItems().find((item) => {
+    return [item.title, item.raw?.id, item.raw?.busStopCode, item.raw?.placeCode, item.raw?.postal, item.shortLabel].some((value) => {
+      return String(value || "").trim().toLowerCase() === normalized;
+    });
+  });
+}
+
+function renderDirectionsSuggestions() {
+  const activeField = state.activeDirectionsField;
+  const query = directionInputValue(activeField);
+  const suggestions = directionSuggestions(query);
+
+  if (elements.directionsView.hidden || state.directionsResult || !suggestions.length) {
+    elements.directionsSuggestions.hidden = true;
+    elements.directionsSuggestions.replaceChildren();
+    return;
+  }
+
+  elements.directionsSuggestions.hidden = false;
+  elements.directionsSuggestions.replaceChildren(...suggestions.map(renderDirectionSuggestion));
+}
+
+async function suggestNearbyDirectionsItems() {
+  if (!navigator.geolocation) {
+    state.directionsError = "Browser location is not available.";
+    renderDirectionsResult();
+    return;
+  }
+
+  elements.directionsCurrentLocationButton.disabled = true;
+  elements.directionsCurrentLocationButton.classList.add("is-loading");
+  state.directionsError = "";
+  state.directionsResult = null;
+  renderDirectionsResult();
+
+  try {
+    await loadLocations();
+    const position = await getCurrentPosition();
+    const origin = {
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude
+    };
+    const suggestions = nearbyDirectionSuggestions(origin);
+    if (!suggestions.length) {
+      state.directionsError = "No nearby campus locations or stops found.";
+      renderDirectionsResult();
+      return;
+    }
+    elements.directionsSuggestions.hidden = false;
+    elements.directionsSuggestions.replaceChildren(...suggestions.map(renderDirectionSuggestion));
+    elements.directionsResult.replaceChildren();
+  } catch (error) {
+    state.directionsError = error.message || "Could not get browser location.";
+    renderDirectionsResult();
+  } finally {
+    elements.directionsCurrentLocationButton.disabled = false;
+    elements.directionsCurrentLocationButton.classList.remove("is-loading");
+  }
+}
+
+function renderDirectionSuggestion(item) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "direction-suggestion";
+  button.dataset.itemId = item.id;
+  button.innerHTML = `
+    <span class="direction-suggestion-icon" aria-hidden="true">${item.type === "venue" ? "⌂" : "BUS"}</span>
+    <span>
+      <strong>${escapeHtml(item.title)}</strong>
+      <small>${escapeHtml(item.subtitle || (item.type === "venue" ? "NUS venue" : "Bus stop"))}</small>
+    </span>
+  `;
+  return button;
+}
+
+function pickDirectionSuggestion(itemId) {
+  const item = directionItems().find((candidate) => candidate.id === itemId);
+  if (!item) return;
+
+  const field = state.activeDirectionsField;
+  setSelectedDirectionItem(field, item);
+  setDirectionInputValue(field, item.title);
+  clearDirectionsRequestState();
+  state.activeDirectionsField = field === "from" ? "to" : "from";
+  renderDirectionsSuggestions();
+  renderDirectionsResult();
+  (state.activeDirectionsField === "from" ? elements.directionsFromInput : elements.directionsToInput).focus();
+  scheduleDirectionsAutoSubmit();
+}
+
+async function useLocationSearchResult(itemId) {
+  const item = directionItems().find((candidate) => candidate.id === itemId);
+  if (!item) return;
+
+  state.directionsFromItem = null;
+  state.directionsToItem = item;
+  elements.directionsFromInput.value = "";
+  elements.directionsToInput.value = item.title;
+  state.activeDirectionsField = "from";
+  clearDirectionsRequestState();
+  await openDirectionsView({ pushHistory: true });
+  elements.directionsFromInput.focus();
+}
+
+function resolveDirectionItem(field) {
+  const selected = selectedDirectionItem(field);
+  if (selected) return selected;
+  return exactDirectionMatch(directionInputValue(field));
+}
+
+function routableStopForItem(item) {
+  if (!item) return null;
+  if (item.type === "stop") return item.raw;
+
+  const coords = item.coordinates;
+  if (!coords) return null;
+  const routableStops = state.stops.filter(isRoutableNusStop);
+  const candidates = routableStops.length ? routableStops : state.stops;
+  return candidates
+    .map((stop) => {
+      const stopCoords = stopCoordinates(stop);
+      return { stop, distance: stopCoords ? haversine(coords, stopCoords) : Number.POSITIVE_INFINITY };
+    })
+    .filter((entry) => Number.isFinite(entry.distance))
+    .sort((left, right) => left.distance - right.distance)[0]?.stop || null;
+}
+
+function isRoutableNusStop(stop) {
+  if (stop.sourceModes?.nus) return true;
+  return (stop.services || []).some((service) => service.source === "nus" || String(service.key || "").startsWith("nus:"));
+}
+
+async function findDirections(event, options = {}) {
+  event?.preventDefault();
+  state.directionsError = "";
+
+  const fromItem = resolveDirectionItem("from");
+  const toItem = resolveDirectionItem("to");
+  const fromStop = routableStopForItem(fromItem);
+  const toStop = routableStopForItem(toItem);
+  const requestKey = fromStop && toStop ? `${fromStop.id}->${toStop.id}` : "";
+
+  if (!fromItem || !toItem || !fromStop || !toStop) {
+    state.directionsResult = null;
+    if (fromItem && !fromStop) {
+      state.directionsError = `No nearby bus stop location is available for ${fromItem.title}.`;
+    } else if (toItem && !toStop) {
+      state.directionsError = `No nearby bus stop location is available for ${toItem.title}.`;
+    } else {
+      state.directionsError = "Select both a start and an end point from the suggestions.";
+    }
+    renderDirectionsResult();
+    return;
+  }
+
+  if (requestKey && requestKey === state.directionsLastRequestKey && state.directionsResult) return;
+  state.directionsLastRequestKey = requestKey;
+  state.directionsResult = null;
+  state.directionsLoading = true;
+  renderDirectionsResult();
+
+  try {
+    const directions = await apiGet("/directions", {
+      fromStopId: fromStop.id,
+      toStopId: toStop.id
+    });
+    state.directionsResult = {
+      directions,
+      fromItem,
+      toItem,
+      fromStop,
+      toStop
+    };
+    elements.directionsSuggestions.hidden = true;
+    elements.directionsSuggestions.replaceChildren();
+    if (options.pushHistory !== false) pushDirectionsGuideHistory(fromItem, toItem);
+    markUpdated();
+  } catch (error) {
+    state.directionsError = error.message || "Could not find a route.";
+  } finally {
+    state.directionsLoading = false;
+    renderDirectionsResult();
+  }
+}
+
+function pushDirectionsGuideHistory(fromItem, toItem) {
+  const hash = `#directions?from=${encodeURIComponent(fromItem.id)}&to=${encodeURIComponent(toItem.id)}`;
+  const stateObject = { view: "directions", from: fromItem.id, to: toItem.id };
+  if (window.location.hash === hash) {
+    history.replaceState(stateObject, "", hash);
+    return;
+  }
+  history.pushState(stateObject, "", hash);
+}
+
+function swapDirections() {
+  const fromItem = state.directionsFromItem;
+  const fromValue = elements.directionsFromInput.value;
+  state.directionsFromItem = state.directionsToItem;
+  elements.directionsFromInput.value = elements.directionsToInput.value;
+  state.directionsToItem = fromItem;
+  elements.directionsToInput.value = fromValue;
+  state.activeDirectionsField = state.directionsFromItem ? "to" : "from";
+  clearDirectionsRequestState();
+  renderDirectionsSuggestions();
+  renderDirectionsResult();
+  scheduleDirectionsAutoSubmit();
+}
+
+function scheduleDirectionsAutoSubmit() {
+  window.clearTimeout(state.directionsAutoSubmitTimer);
+  state.directionsAutoSubmitTimer = window.setTimeout(() => {
+    if (elements.directionsView.hidden || state.directionsLoading) return;
+    const fromItem = resolveDirectionItem("from");
+    const toItem = resolveDirectionItem("to");
+    if (!fromItem || !toItem) return;
+    if (!routableStopForItem(fromItem) || !routableStopForItem(toItem)) return;
+    findDirections();
+  }, 250);
+}
+
+function renderDirectionsResult() {
+  if (elements.directionsView.hidden) return;
+
+  if (state.directionsLoading) {
+    elements.directionsResult.innerHTML = `<div class="empty-state compact">Finding route...</div>`;
+    return;
+  }
+
+  if (state.directionsError) {
+    elements.directionsResult.innerHTML = `<div class="empty-state compact error">${escapeHtml(state.directionsError)}</div>`;
+    return;
+  }
+
+  const result = state.directionsResult;
+  if (!result) {
+    if (!elements.directionsSuggestions.hidden) {
+      elements.directionsResult.replaceChildren();
+      return;
+    }
+    elements.directionsResult.innerHTML = `<div class="empty-state compact">Choose two locations to preview the best route.</div>`;
+    return;
+  }
+
+  elements.directionsResult.innerHTML = renderDirectionsPlan(result);
+}
+
+function renderDirectionsPlan(result) {
+  const { directions, fromItem, toItem, fromStop, toStop } = result;
+  const legs = directions.legs || [];
+  const summary = legs.length ? legs.map((leg) => leg.routeCode).join(" → ") : "Same stop";
+  const stopCount = legs.reduce((count, leg) => count + Math.max(0, (leg.stops || []).length - 1), 0);
+  const transfers = directions.transfers || 0;
+  const stopText = formatCount(stopCount, "stop");
+  const routeMeta = renderDirectionsMeta(transfers, stopText);
+  const nearestNotes = [
+    fromItem.type === "venue" ? `${fromItem.title} → ${fromStop.title}` : "",
+    toItem.type === "venue" ? `${toItem.title} → ${toStop.title}` : ""
+  ].filter(Boolean);
+  const stopAdvisory = renderDirectionsStopAdvisory(nearestNotes);
+
+  if (!legs.length) {
+    return `
+      ${stopAdvisory}
+      <section class="directions-plan-card">
+        <header class="directions-plan-head">
+          <div>
+            <h3>${escapeHtml(directions.fromStop.title)} → ${escapeHtml(directions.toStop.title)}</h3>
+            <p>No bus ride needed.</p>
+          </div>
+        </header>
+      </section>
+    `;
+  }
+
+  return `
+    ${stopAdvisory}
+    <section class="directions-plan-card">
+      <header class="directions-plan-head">
+        <div>
+          <h3>${escapeHtml(directions.fromStop.title)} → ${escapeHtml(directions.toStop.title)}</h3>
+          <p>${routeMeta}</p>
+        </div>
+      </header>
+      <div class="directions-leg-list">
+        ${legs.map(renderDirectionsLeg).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderDirectionsStopAdvisory(notes) {
+  if (!notes.length) return "";
+  return `
+    <aside class="directions-stop-advisory">
+      <strong>Closest bus stops</strong>
+      <span>${notes.map(escapeHtml).join(" - ")}</span>
+    </aside>
+  `;
+}
+
+function renderDirectionsMeta(transfers, stopText) {
+  const transferText = formatCount(transfers, "transfer");
+  if (transfers <= 1) return `${escapeHtml(transferText)} - ${escapeHtml(stopText)}`;
+  return `<span class="directions-transfer-count">${escapeHtml(transferText)}</span> - ${escapeHtml(stopText)}`;
+}
+
+function renderDirectionsRouteBadge(routeCode, className = "") {
+  const color = routeColorForCode(routeCode);
+  return `<span class="route-badge ${escapeHtml(className)}" style="background:${escapeHtml(color.background)};color:${escapeHtml(color.text)}">${escapeHtml(routeCode)}</span>`;
+}
+
+function renderDirectionsLeg(leg, index) {
+  const stopCount = Math.max(0, (leg.stops || []).length - 1);
+  return `
+    <article class="directions-leg">
+      ${renderDirectionsRouteBadge(leg.routeCode, "directions-leg-route")}
+      <div class="directions-leg-body">
+        <div class="directions-leg-top">
+          <strong>${escapeHtml(leg.fromStop.title)} → ${escapeHtml(leg.toStop.title)}</strong>
+          <span>${escapeHtml(formatCount(stopCount, "stop"))}</span>
+        </div>
+        <div class="directions-arrival-chips" aria-label="${escapeHtml(leg.routeCode)} arrival timings">
+          ${(leg.boardingArrivals || []).slice(0, 3).map(renderDirectionsArrivalChip).join("")}
+        </div>
+        ${renderDirectionsStopTrail(leg.stops || [])}
+        ${index > 0 ? `<p class="directions-transfer-note">Board after transfer</p>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+function routeColorForCode(routeCode) {
+  const normalized = String(routeCode || "").trim().toLowerCase();
+  const service = state.stops.flatMap((stop) => stop.services || []).find((candidate) => {
+    return String(candidate.name || "").trim().toLowerCase() === normalized || String(candidate.key || "").split(":").pop().trim().toLowerCase() === normalized;
+  });
+  return {
+    background: service?.color?.background || "#2f6f68",
+    text: service?.color?.text || "#ffffff"
+  };
+}
+
+function renderDirectionsArrivalChip(arrival) {
+  const loadLevel = arrival.liveVehicle?.load?.crowdLevel || arrival.liveVehicle?.load?.crowdLabel;
+  return renderEtaChip(arrival.display, arrival.minutes, `route-stop-eta ${loadClass(loadLevel)}`);
+}
+
+function renderDirectionsStopTrail(stops) {
+  if (!stops.length) return "";
+  return `
+    <ol class="directions-stop-trail">
+      ${stops.map((stop) => {
+        const stopId = stop.id || stop.code || stop.name || "";
+        const label = stop.shortLabel || stop.title || stop.id;
+        return `
+          <li>
+            <a class="directions-stop-link" href="#stop=${encodeURIComponent(stopId)}" data-stop-id="${escapeHtml(stopId)}">${escapeHtml(label)}</a>
+          </li>
+        `;
+      }).join("")}
+    </ol>
+  `;
+}
+
+function locationCategoryLabel(category) {
+  return String(category || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 async function refreshVisibleData() {
@@ -596,7 +1303,7 @@ function renderRouteView(service) {
   elements.routeBadge.style.color = text;
   elements.routeTitle.textContent = `${service.name} Route`;
   elements.routeMeta.textContent = [
-    route.destination && `Towards ${route.destination}`,
+    cleanDirectionLabel(route.destination),
     route.schedule?.label,
     route.schedule?.firstTime && route.schedule?.lastTime ? `${route.schedule.firstTime}-${route.schedule.lastTime}` : "",
     `${stops.length} stops`
@@ -610,6 +1317,10 @@ function renderRouteView(service) {
   } catch (error) {
     elements.routeBody.innerHTML = `<div class="empty-state error">Could not render route: ${escapeHtml(error.message || "Unknown error")}</div>`;
   }
+}
+
+function cleanDirectionLabel(label) {
+  return String(label || "").replace(/^towards\s+/i, "").trim();
 }
 
 function routeStopsElement(stops, routeVehicles, arrivingVehiclesByStop, stopArrivalsByStop, isLoadingStopTimings, color, text) {
@@ -669,14 +1380,34 @@ function renderRouteStopTiming(stop, stopArrivalsByStop, isLoadingStopTimings) {
   const arrivals = arrivalsForRouteStop(stop, stopArrivalsByStop);
   const arrival = arrivals[0];
   if (!arrival) {
-    return `<span class="route-stop-eta is-muted">${isLoadingStopTimings ? "..." : "No bus"}</span>`;
+    return renderEtaChip(isLoadingStopTimings ? "..." : "No bus", Number.NaN, "route-stop-eta is-muted");
   }
 
   const load = arrival.liveVehicle?.load?.crowdLabel;
   const loadLevel = arrival.liveVehicle?.load?.crowdLevel || load;
   const vehicle = arrival.vehiclePlate || arrival.meta;
   const detail = [vehicle, load && `${load} load`].filter(Boolean).join(" - ");
-  return `<span class="route-stop-eta ${escapeHtml(loadClass(loadLevel))}" title="${escapeHtml(detail || "Next bus")}">${escapeHtml(arrival.display || minutesLabel(arrival.minutes))}</span>`;
+  return renderEtaChip(arrival.display, arrival.minutes, `route-stop-eta ${loadClass(loadLevel)}`, detail || "Next bus");
+}
+
+function renderEtaChip(display, minutes, className, title = "") {
+  const eta = etaParts(display, minutes);
+  const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
+  if (eta.unit) {
+    return `<strong class="${escapeHtml(className)}"${titleAttr}><span class="eta-number">${escapeHtml(eta.value)}</span><span class="eta-unit">${escapeHtml(eta.unit)}</span></strong>`;
+  }
+  return `<strong class="${escapeHtml(className)} is-text"${titleAttr}>${escapeHtml(eta.value)}</strong>`;
+}
+
+function etaParts(display, minutes) {
+  const label = String(display || minutesLabel(minutes)).trim();
+  if (minutes === 0 || label.toLowerCase() === "arriving") return { value: "Arr", unit: "" };
+  if (Number.isFinite(minutes)) return { value: String(Math.min(999, Math.max(0, Math.round(minutes)))), unit: "min" };
+
+  const match = label.match(/^(\d{1,3})\s*(min|mins|minutes?)?$/i);
+  if (match) return { value: match[1], unit: "min" };
+  if (label === "...") return { value: "...", unit: "" };
+  return { value: label.slice(0, 3), unit: "" };
 }
 
 function routeStopSequence(stop, index = -1) {
@@ -720,7 +1451,7 @@ function vehicleSummary(vehicle, status) {
 }
 
 function routeBusMarkerPosition(vehicle, previousStop, nextStop, vehicleIndex, isStopped) {
-  const leftJitter = [62, 72, 82][vehicleIndex % 3];
+  const leftJitter = [42, 52, 62][vehicleIndex % 3];
   const stopCenterTop = 44;
   const markerDotOffset = 18;
   if (isStopped) {
@@ -959,6 +1690,11 @@ async function loadStops() {
     const data = await apiGet("/stops");
     state.stops = data.stops || [];
     applyFilters();
+    if (isDirectionsHash()) {
+      await openDirectionsView({ pushHistory: false, scroll: true });
+      return;
+    }
+    loadLocations().then(applyFilters);
     const routeKey = routeKeyFromHash();
     if (routeKey) await restoreRouteFromKey(routeKey, { scroll: true });
   } catch (error) {
@@ -980,7 +1716,8 @@ async function useBrowserLocation() {
   }
 
   elements.locationButton.disabled = true;
-  elements.locationButton.textContent = "Locating...";
+  elements.locationButton.classList.add("is-loading");
+  elements.locationButton.setAttribute("aria-label", "Locating...");
   elements.loadStatus.textContent = "Requesting browser location...";
 
   try {
@@ -994,7 +1731,8 @@ async function useBrowserLocation() {
     elements.loadStatus.textContent = error.message || "Could not get browser location";
   } finally {
     elements.locationButton.disabled = false;
-    elements.locationButton.textContent = state.sortOrigin ? "Clear Location" : "Use Location";
+    elements.locationButton.classList.remove("is-loading");
+    elements.locationButton.setAttribute("aria-label", state.sortOrigin ? "Clear current location sort" : "Use current location");
   }
 }
 
@@ -1023,18 +1761,13 @@ function freshnessLabel() {
 }
 
 function updateStatus() {
-  const base = `${formatCount(state.filteredStops.length, "stop")} shown`;
-  const pinnedCount = state.pinnedStopIds.size;
-  const pinnedText = pinnedCount ? `, ${formatCount(pinnedCount, "pin")}` : "";
   const freshnessText = freshnessLabel();
-  const freshness = freshnessText ? ` • ${freshnessText}` : "";
+  elements.loadStatus.textContent = freshnessText || "Updating...";
   if (!state.sortOrigin) {
-    elements.loadStatus.textContent = `${formatCount(state.stops.length, "stop")} loaded${pinnedText}${freshness}`;
-    elements.locationButton.textContent = "Use Location";
+    elements.locationButton.setAttribute("aria-label", "Use current location");
     return;
   }
-  elements.loadStatus.textContent = `${base}, closest first${pinnedText}${freshness}`;
-  elements.locationButton.textContent = "Clear Location";
+  elements.locationButton.setAttribute("aria-label", "Clear current location sort");
 }
 
 function loadPinnedStopIds() {
@@ -1132,9 +1865,29 @@ function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
 
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {
-      // The app should keep working even if the installable shell cannot be cached.
-    });
+    navigator.serviceWorker
+      .register("/sw.js")
+      .then((registration) => {
+        registration.addEventListener("updatefound", () => {
+          const worker = registration.installing;
+          if (!worker) return;
+          worker.addEventListener("statechange", () => {
+            if (worker.state === "installed" && navigator.serviceWorker.controller) {
+              worker.postMessage({ type: "SKIP_WAITING" });
+            }
+          });
+        });
+      })
+      .catch(() => {
+        // The app should keep working even if the installable shell cannot be cached.
+      });
+  });
+
+  let isReloadingForServiceWorker = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (isReloadingForServiceWorker) return;
+    isReloadingForServiceWorker = true;
+    window.location.reload();
   });
 }
 
@@ -1208,12 +1961,61 @@ function isIosDevice() {
   return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
-elements.searchInput.addEventListener("input", applyFilters);
+elements.searchInput.addEventListener("input", handleSearchInput);
 elements.locationButton.addEventListener("click", useBrowserLocation);
 elements.homeButton.addEventListener("click", resetBrowsingExperience);
+elements.mainPageHeaderLink.addEventListener("click", resetBrowsingExperience);
+elements.directionsHeaderLink.addEventListener("click", () => {
+  openDirectionsView({ pushHistory: !isDirectionsHash() });
+});
 elements.installButton?.addEventListener("click", handleInstallPromptAction);
 elements.installDismiss?.addEventListener("click", () => hideInstallPrompt(true));
+elements.directionsFromInput.addEventListener("focus", () => {
+  state.activeDirectionsField = "from";
+  renderDirectionsSuggestions();
+  loadLocations().then(renderDirectionsSuggestions);
+});
+elements.directionsToInput.addEventListener("focus", () => {
+  state.activeDirectionsField = "to";
+  renderDirectionsSuggestions();
+  loadLocations().then(renderDirectionsSuggestions);
+});
+elements.directionsFromInput.addEventListener("input", () => {
+  state.activeDirectionsField = "from";
+  state.directionsFromItem = null;
+  clearDirectionsRequestState();
+  renderDirectionsSuggestions();
+  loadLocations().then(() => {
+    renderDirectionsSuggestions();
+    scheduleDirectionsAutoSubmit();
+  });
+  renderDirectionsResult();
+});
+elements.directionsToInput.addEventListener("input", () => {
+  state.activeDirectionsField = "to";
+  state.directionsToItem = null;
+  clearDirectionsRequestState();
+  renderDirectionsSuggestions();
+  loadLocations().then(() => {
+    renderDirectionsSuggestions();
+    scheduleDirectionsAutoSubmit();
+  });
+  renderDirectionsResult();
+});
+elements.directionsSuggestions.addEventListener("click", (event) => {
+  const suggestion = event.target.closest(".direction-suggestion");
+  if (suggestion?.dataset.itemId) pickDirectionSuggestion(suggestion.dataset.itemId);
+});
+elements.directionsForm.addEventListener("submit", findDirections);
+elements.directionsSwapButton.addEventListener("click", swapDirections);
+elements.directionsCurrentLocationButton.addEventListener("click", suggestNearbyDirectionsItems);
 elements.stopList.addEventListener("click", (event) => {
+  const locationCard = event.target.closest(".location-card");
+  if (locationCard?.dataset.locationItemId) {
+    useLocationSearchResult(locationCard.dataset.locationItemId);
+    return;
+  }
+
   const stopCard = event.target.closest(".stop-card");
 
   const pinButton = event.target.closest(".pin-button");
@@ -1242,6 +2044,12 @@ elements.routeBody.addEventListener("click", (event) => {
   const routeStopButton = event.target.closest(".route-stop-content");
   if (routeStopButton?.dataset.stopId) openStopFromRoute(routeStopButton.dataset.stopId);
 });
+elements.directionsResult.addEventListener("click", (event) => {
+  const stopLink = event.target.closest(".directions-stop-link");
+  if (!stopLink?.dataset.stopId) return;
+  event.preventDefault();
+  openStopFromRoute(stopLink.dataset.stopId);
+});
 window.addEventListener("popstate", handleHistoryChange);
 window.addEventListener("hashchange", handleHashChange);
 document.addEventListener("visibilitychange", () => {
@@ -1249,7 +2057,8 @@ document.addEventListener("visibilitychange", () => {
 });
 
 const initialRouteKey = routeKeyFromHash();
-history.replaceState(initialRouteKey ? { view: "route", serviceKey: initialRouteKey } : { view: "stops" }, "", initialRouteKey ? window.location.href : window.location.pathname);
+const initialState = isDirectionsHash() ? { view: "directions" } : initialRouteKey ? { view: "route", serviceKey: initialRouteKey } : { view: "stops" };
+history.replaceState(initialState, "", initialRouteKey || isDirectionsHash() ? window.location.href : window.location.pathname);
 registerServiceWorker();
 initInstallPrompt();
 startAutoRefresh();

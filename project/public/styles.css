@@ -57,6 +57,13 @@ p {
   border-bottom: 1px solid var(--line);
 }
 
+.header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -73,6 +80,32 @@ p {
 .brand:hover h1,
 .brand:focus h1 {
   color: var(--accent-dark);
+}
+
+.header-nav {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.header-link {
+  width: fit-content;
+  border: 0;
+  background: transparent;
+  color: var(--accent-dark);
+  padding: 0;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.header-link:hover,
+.header-link:focus {
+  color: var(--accent);
 }
 
 .logo {
@@ -163,6 +196,46 @@ button:focus {
   cursor: wait;
 }
 
+.gps-button {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  min-width: 42px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--accent-dark);
+  padding: 0;
+}
+
+.gps-button:hover,
+.gps-button:focus {
+  border-color: var(--accent);
+  background: #f6faf8;
+}
+
+.gps-button:disabled {
+  border-color: var(--line);
+  background: #edf0ed;
+  color: var(--muted);
+  cursor: wait;
+}
+
+.gps-button svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.gps-button.is-loading svg {
+  animation: gpsPulse 900ms ease-in-out infinite alternate;
+}
+
 .install-prompt {
   display: flex;
   align-items: center;
@@ -243,6 +316,10 @@ button:focus {
   box-shadow: inset 4px 0 0 var(--accent);
 }
 
+.location-card {
+  box-shadow: inset 4px 0 0 #7c9089;
+}
+
 .stop-top {
   display: flex;
   align-items: start;
@@ -277,6 +354,17 @@ button:focus {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+}
+
+.location-type {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .service-row {
@@ -410,18 +498,14 @@ button:focus {
 
 .arrival-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+  grid-template-columns: repeat(3, minmax(76px, 1fr));
   gap: 8px;
 }
 
 .arrival {
   display: grid;
-  gap: 3px;
-  min-height: 82px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-  padding: 10px;
+  gap: 4px;
+  min-width: 0;
 }
 
 .arrival small {
@@ -434,11 +518,44 @@ button:focus {
   line-height: 1.05;
 }
 
-.arrival-time {
-  display: inline-block;
-  width: fit-content;
-  border-radius: 8px;
-  padding: 2px 5px;
+.arrival-time,
+.route-stop-eta {
+  display: grid;
+  grid-auto-flow: column;
+  align-content: center;
+  align-items: baseline;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  min-width: 72px;
+  height: 48px;
+  border-radius: 12px;
+  padding: 0 8px;
+  font-weight: 500;
+  line-height: 1;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.arrival-time .eta-number,
+.route-stop-eta .eta-number {
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.arrival-time .eta-unit,
+.route-stop-eta .eta-unit {
+  margin-left: 1px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  opacity: 0.78;
+}
+
+.arrival-time.is-text,
+.route-stop-eta.is-text {
+  font-size: 15px;
 }
 
 .arrival-time.load-low {
@@ -513,6 +630,360 @@ button:focus {
   padding: 16px;
 }
 
+.directions-view {
+  display: grid;
+  gap: 12px;
+  padding: 14px 0 36px;
+}
+
+.directions-header,
+.directions-form,
+.directions-suggestions,
+.directions-plan-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.directions-header {
+  padding: 16px;
+}
+
+.directions-header h2 {
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.directions-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px minmax(0, 1fr) 42px;
+  align-items: end;
+  gap: 8px;
+  padding: 14px;
+}
+
+.direction-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.direction-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.swap-button {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--accent-dark);
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.directions-gps-button {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  min-width: 42px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--accent-dark);
+  padding: 0;
+}
+
+.directions-gps-button:hover,
+.directions-gps-button:focus {
+  border-color: var(--accent);
+  background: #f6faf8;
+}
+
+.directions-gps-button:disabled {
+  border-color: var(--line);
+  background: #edf0ed;
+  color: var(--muted);
+  cursor: wait;
+}
+
+.directions-gps-button svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.directions-gps-button.is-loading svg {
+  animation: gpsPulse 900ms ease-in-out infinite alternate;
+}
+
+.directions-submit-button {
+  display: none;
+}
+
+@keyframes gpsPulse {
+  from {
+    transform: scale(0.92);
+    opacity: 0.55;
+  }
+
+  to {
+    transform: scale(1.04);
+    opacity: 1;
+  }
+}
+
+.directions-suggestions {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+}
+
+.direction-suggestion {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 62px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: #fff;
+  color: inherit;
+  padding: 9px 12px;
+  text-align: left;
+}
+
+.direction-suggestion:first-child {
+  border-top: 0;
+}
+
+.direction-suggestion:hover,
+.direction-suggestion:focus {
+  background: #f6faf8;
+}
+
+.direction-suggestion-icon {
+  display: grid;
+  place-items: center;
+  min-width: 38px;
+  height: 34px;
+  border-radius: 8px;
+  background: #eef3ef;
+  color: var(--accent-dark);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.direction-suggestion strong,
+.direction-suggestion small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directions-result {
+  display: grid;
+  gap: 12px;
+}
+
+.directions-stop-advisory {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #b7d1cb;
+  border-radius: 8px;
+  background: #f1faf7;
+  color: var(--accent-dark);
+  padding: 12px 14px;
+  font-size: 13px;
+}
+
+.directions-stop-advisory strong {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.directions-stop-advisory span {
+  min-width: 0;
+  color: var(--ink);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.directions-plan-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.directions-plan-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.directions-plan-head > div {
+  min-width: 0;
+}
+
+.directions-plan-head h3 {
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.directions-plan-head small {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+}
+
+.directions-transfer-count {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #fff4d6;
+  color: #8a4b00;
+  padding: 2px 8px;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.directions-leg-list {
+  display: grid;
+  gap: 10px;
+}
+
+.directions-leg {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.directions-leg-route {
+  align-self: start;
+  min-width: 52px;
+  min-height: 34px;
+  background: #eef3ef;
+  color: var(--accent-dark);
+  font-size: 14px;
+}
+
+.directions-leg-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.directions-leg-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.directions-leg-top strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.directions-leg-top span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.directions-arrival-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.directions-arrival-chips .route-stop-eta {
+  flex: 1 1 84px;
+  width: auto;
+  min-width: 84px;
+  height: 44px;
+}
+
+.directions-stop-trail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.directions-stop-trail li {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.directions-stop-trail li::after {
+  content: "→";
+  color: var(--accent-dark);
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.directions-stop-trail li:last-child::after {
+  content: "";
+}
+
+.directions-stop-link {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--accent-dark);
+  padding: 0;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+.directions-stop-trail li:first-child .directions-stop-link,
+.directions-stop-trail li:last-child .directions-stop-link {
+  color: var(--accent-dark);
+}
+
+.directions-stop-link:hover,
+.directions-stop-link:focus {
+  color: var(--accent);
+}
+
+.directions-transfer-note {
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .app-footer {
   margin-top: 18px;
   padding: 16px 0 0;
@@ -569,7 +1040,7 @@ button:focus {
 
 .route-stop-item {
   display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
+  grid-template-columns: 92px minmax(0, 1fr);
   align-items: stretch;
   gap: 8px;
   min-height: 88px;
@@ -614,7 +1085,7 @@ button:focus {
 
 .route-stop-content {
   display: grid;
-  gap: 2px;
+  gap: 5px;
   justify-items: start;
   align-content: center;
   align-self: stretch;
@@ -639,15 +1110,16 @@ button:focus {
   display: block;
 }
 
-.route-stop-eta {
+.route-stop-content strong {
+  font-weight: 500;
+}
+
+.route-stop-content .route-stop-eta {
   display: inline-grid;
-  place-items: center;
-  min-height: 24px;
-  border-radius: 999px;
-  padding: 3px 9px;
-  font-size: 12px;
-  font-weight: 900;
-  line-height: 1;
+  width: auto;
+  min-width: 76px;
+  height: 38px;
+  padding: 0 12px;
 }
 
 .route-stop-eta.load-low {
@@ -673,7 +1145,7 @@ button:focus {
 .route-stop-eta.is-muted {
   background: #f3f5f3;
   color: var(--muted);
-  font-weight: 800;
+  font-weight: 500;
 }
 
 .route-bus-marker {
@@ -821,11 +1293,70 @@ button:focus {
     font-size: 14px;
   }
 
+  .directions-form {
+    grid-template-columns: minmax(0, 1fr) 48px;
+    align-items: end;
+    gap: 12px 10px;
+  }
+
+  .directions-form .direction-field {
+    grid-column: 1;
+  }
+
+  .directions-form .direction-field:first-of-type {
+    grid-row: 1;
+  }
+
+  .directions-form .direction-field:nth-of-type(2) {
+    grid-row: 2;
+  }
+
+  .directions-gps-button {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    align-self: end;
+    width: 48px;
+    min-width: 48px;
+    height: 40px;
+    margin: 0;
+  }
+
+  .swap-button {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+    align-self: end;
+    width: 48px;
+    height: 40px;
+    margin: 0;
+  }
+
+  .directions-plan-head {
+    align-items: flex-start;
+  }
+
+  .directions-stop-advisory {
+    align-items: flex-start;
+    display: grid;
+    gap: 4px;
+  }
+
+  .directions-leg {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .directions-leg-top {
+    display: grid;
+    gap: 3px;
+  }
+
   .arrival-grid {
-    display: flex;
-    justify-content: flex-end;
+    display: grid;
+    grid-template-columns: repeat(3, 68px);
+    justify-content: end;
     gap: 6px;
-    min-width: max-content;
+    min-width: 0;
   }
 
   .arrival {
@@ -841,15 +1372,29 @@ button:focus {
   }
 
   .arrival strong {
-    display: block;
-    min-width: 44px;
+    display: grid;
+    grid-auto-flow: column;
+    align-content: center;
+    align-items: baseline;
+    justify-content: center;
+    gap: 2px;
+    width: 100%;
+    min-width: 0;
+    height: 34px;
     border: 1px solid var(--line);
-    border-radius: 999px;
+    border-radius: 12px;
     background: #fff;
-    padding: 5px 8px;
-    font-size: 15px;
+    padding: 0 6px;
     line-height: 1;
     text-align: center;
     white-space: nowrap;
+  }
+
+  .arrival strong .eta-number {
+    font-size: 17px;
+  }
+
+  .arrival strong .eta-unit {
+    font-size: 9px;
   }
 }

@@ -1,4 +1,4 @@
-const CACHE_NAME = "nus-bus-shell-v3";
+const CACHE_NAME = "nus-bus-shell-v19";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -19,6 +19,10 @@ self.addEventListener("install", (event) => {
       .then((cache) => cache.addAll(APP_SHELL))
       .then(() => self.skipWaiting())
   );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {

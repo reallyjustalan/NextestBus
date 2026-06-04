@@ -77,6 +77,22 @@ async function proxyNusBus(request) {
   }
 }
 
+async function fetchLocationsJson(request, env) {
+  const url = new URL(request.url);
+  const assetUrl = new URL("/data/nus-map-locations.json", url.origin);
+  const response = await env.ASSETS.fetch(new Request(assetUrl, request));
+
+  if (!response.ok) return response;
+
+  return new Response(response.body, {
+    status: response.status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "public, max-age=3600"
+    }
+  });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -87,6 +103,14 @@ export default {
       }
 
       return proxyNusBus(request);
+    }
+
+    if (url.pathname === "/api/locations") {
+      if (request.method !== "GET") {
+        return sendJson({ message: "Method not allowed." }, 405);
+      }
+
+      return fetchLocationsJson(request, env);
     }
 
     if (url.pathname.startsWith("/api/")) {
