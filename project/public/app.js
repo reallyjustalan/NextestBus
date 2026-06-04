@@ -539,7 +539,7 @@ function renderService(service, stopId = "") {
   card.innerHTML = `
     <div class="service-header">
       <span class="route-badge" style="background:${escapeHtml(color)};color:${escapeHtml(text)}">${escapeHtml(service.name)}</span>
-      <span>${escapeHtml(nextStop || cleanDirectionLabel(service.subtitle) || "Campus shuttle")}</span>
+      <span class="service-destination">${escapeHtml(nextStop || cleanDirectionLabel(service.subtitle) || "Campus shuttle")}</span>
     </div>
     <div class="arrival-grid">
       ${arrivals.map(renderArrival).join("")}

@@ -454,6 +454,8 @@ button:focus {
 
 .service-card {
   display: grid;
+  grid-template-columns: auto minmax(96px, 1fr) auto;
+  align-items: center;
   gap: 12px;
   width: 100%;
   border: 1px solid var(--line);
@@ -479,10 +481,14 @@ button:focus {
 }
 
 .service-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  display: contents;
+}
+
+.service-destination {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .route-badge {
@@ -498,7 +504,8 @@ button:focus {
 
 .arrival-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(76px, 1fr));
+  grid-template-columns: repeat(3, 82px);
+  justify-content: end;
   gap: 8px;
 }
 
@@ -509,6 +516,7 @@ button:focus {
 }
 
 .arrival small {
+  display: none;
   color: var(--muted);
   font-size: 12px;
 }
@@ -528,7 +536,7 @@ button:focus {
   gap: 2px;
   width: 100%;
   min-width: 72px;
-  height: 48px;
+  height: 40px;
   border-radius: 12px;
   padding: 0 8px;
   font-weight: 500;
@@ -540,7 +548,7 @@ button:focus {
 .arrival-time .eta-number,
 .route-stop-eta .eta-number {
   font-size: 20px;
-  font-weight: 500;
+  font-weight: 800;
   line-height: 1;
 }
 
@@ -556,6 +564,7 @@ button:focus {
 .arrival-time.is-text,
 .route-stop-eta.is-text {
   font-size: 15px;
+  font-weight: 800;
 }
 
 .arrival-time.load-low {
@@ -1278,6 +1287,7 @@ button:focus {
   }
 
   .service-header {
+    display: flex;
     gap: 8px;
   }
 
