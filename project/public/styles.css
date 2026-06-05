@@ -27,6 +27,13 @@ body.is-pulling-refresh {
   overscroll-behavior-y: contain;
 }
 
+.icon-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
 button,
 input {
   font: inherit;
@@ -1059,19 +1066,61 @@ button:focus {
   min-width: 0;
 }
 
+.directions-mode {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 58px;
+  height: 36px;
+  border-radius: 8px;
+  background: #eef3ef;
+  color: var(--accent-dark);
+}
+
+.directions-mode-icon {
+  flex: 0 0 auto;
+  display: block;
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+  overflow: visible;
+}
+
+.directions-mode.is-bus,
+.directions-mode.is-mixed {
+  background: color-mix(in srgb, var(--accent) 13%, #ffffff);
+}
+
+.directions-mode.is-mixed {
+  gap: 7px;
+}
+
+.directions-mode-person {
+  width: 22px;
+  height: 22px;
+}
+
+.directions-mode-bus-icon {
+  width: 22px;
+  height: 22px;
+}
+
 .directions-plan-head > div {
   min-width: 0;
 }
 
 .directions-plan-head h3 {
-  font-size: 18px;
-  line-height: 1.2;
+  font-size: 22px;
+  line-height: 1.05;
 }
 
-.directions-plan-head small {
-  display: block;
-  margin-top: 3px;
-  font-size: 12px;
+.directions-plan-head p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
 }
 
 .directions-transfer-count {
@@ -1086,64 +1135,156 @@ button:focus {
 }
 
 .directions-leg-list {
+  --directions-badge-width: 58px;
+  --directions-leg-gap: 10px;
   display: grid;
   gap: 10px;
 }
 
 .directions-leg {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: var(--directions-badge-width) minmax(0, 1fr);
+  gap: var(--directions-leg-gap);
   border-top: 1px solid var(--line);
   padding-top: 12px;
 }
 
 .directions-leg-route {
   align-self: start;
-  min-width: 52px;
+  width: var(--directions-badge-width);
+  min-width: var(--directions-badge-width);
   min-height: 34px;
   background: #eef3ef;
   color: var(--accent-dark);
   font-size: 14px;
 }
 
+.directions-leg-route-icon {
+  padding: 0;
+}
+
+.directions-leg-route-icon .directions-leg-icon {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: transparent;
+}
+
 .directions-leg-body {
   display: grid;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title title"
+    "duration distance";
+  gap: 8px 12px;
   min-width: 0;
 }
 
-.directions-leg-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+.directions-walk-title {
+  grid-area: title;
   min-width: 0;
+  overflow-wrap: break-word;
 }
 
-.directions-leg-top strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.directions-leg-top span {
+.directions-walk-distance {
+  grid-area: distance;
+  align-self: baseline;
+  justify-self: end;
   color: var(--muted);
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
 }
 
+.directions-leg-body .directions-transfer-note {
+  grid-area: duration;
+  margin: 0;
+}
+
 .directions-arrival-chips {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
 .directions-arrival-chips .route-stop-eta {
-  flex: 1 1 84px;
-  width: auto;
-  min-width: 84px;
+  width: 100%;
+  min-width: 0;
   height: 44px;
+}
+
+.directions-service-options {
+  display: grid;
+  gap: 0;
+  padding-top: 12px;
+  border-top: 1px solid transparent;
+}
+
+.directions-bus-top {
+  display: grid;
+  grid-template-columns: var(--directions-badge-width) minmax(0, 1fr);
+  gap: var(--directions-leg-gap);
+  align-items: start;
+}
+
+.directions-bus-body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.directions-bus-head {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.directions-bus-head strong {
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.directions-bus-head span {
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.directions-service-option {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.directions-service-row {
+  display: grid;
+  grid-template-columns: var(--directions-badge-width) minmax(0, 1fr);
+  gap: var(--directions-leg-gap);
+  align-items: center;
+}
+
+.directions-service-content {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding-left: calc(var(--directions-badge-width) + var(--directions-leg-gap));
+}
+
+.directions-service-option + .directions-service-option {
+  border-top: 1px solid transparent;
+  padding-top: 10px;
+}
+
+.directions-bus-leg {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.directions-bus-shared {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
 }
 
 .directions-stop-trail {
@@ -1204,6 +1345,28 @@ button:focus {
   color: var(--accent-dark);
   font-size: 12px;
   font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.directions-leg-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 8px;
+  background: #eef3ef;
+  color: var(--accent-dark);
+  flex: 0 0 auto;
+}
+
+.directions-leg-icon-bus {
+  background: color-mix(in srgb, var(--accent) 13%, #ffffff);
+}
+
+.directions-leg-icon-svg {
+  width: 20px;
+  height: 20px;
 }
 
 .app-footer {
@@ -1368,6 +1531,11 @@ button:focus {
   background: #f3f5f3;
   color: var(--muted);
   font-weight: 500;
+}
+
+.route-stop-eta.is-placeholder.is-text {
+  font-size: 20px;
+  font-weight: 700;
 }
 
 .route-bus-marker {
@@ -1563,6 +1731,14 @@ button:focus {
     align-items: flex-start;
   }
 
+  .directions-plan-head h3 {
+    font-size: 22px;
+  }
+
+  .directions-plan-head p {
+    font-size: 13px;
+  }
+
   .directions-stop-advisory {
     align-items: flex-start;
     display: grid;
@@ -1570,7 +1746,24 @@ button:focus {
   }
 
   .directions-leg {
-    grid-template-columns: 48px minmax(0, 1fr);
+    --directions-badge-width: 48px;
+    --directions-leg-gap: 10px;
+    grid-template-columns: var(--directions-badge-width) minmax(0, 1fr);
+  }
+
+  .directions-bus-leg {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .directions-leg-route {
+    width: var(--directions-badge-width);
+    min-width: var(--directions-badge-width);
+  }
+
+  .directions-bus-head {
+    display: grid;
+    gap: 3px;
   }
 
   .directions-leg-top {

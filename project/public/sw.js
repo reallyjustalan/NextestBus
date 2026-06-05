@@ -1,10 +1,11 @@
 const CACHE_PREFIX = "nus-bus-shell-";
-const CACHE_NAME = "nus-bus-shell-v30";
+const CACHE_NAME = "nus-bus-shell-v31";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/styles.css",
   "/app.js",
+  "/directions-planner.js",
   "/manifest.webmanifest",
   "/icons/icon.svg",
   "/icons/icon-192.png",
