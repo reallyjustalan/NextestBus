@@ -1,4 +1,5 @@
-const CACHE_NAME = "nus-bus-shell-v25";
+const CACHE_PREFIX = "nus-bus-shell-";
+const CACHE_NAME = "nus-bus-shell-v28";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -29,7 +30,10 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) => {
+        const staleShellCaches = keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME);
+        return Promise.all(staleShellCaches.map((key) => caches.delete(key)));
+      })
       .then(() => self.clients.claim())
   );
 });

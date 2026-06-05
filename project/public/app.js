@@ -6,6 +6,7 @@ const FRESHNESS_TICK_MS = 5000;
 const LOCATIONS_SOURCE = "https://map.nus.edu.sg/index.php/search/ajax_auto";
 const PULL_REFRESH_THRESHOLD_PX = 72;
 const PULL_REFRESH_MAX_PX = 98;
+const PULL_REFRESH_HOLD_MS = 700;
 const ARRIVAL_REFRESH_ANIMATION_MS = 900;
 const LOGO_REFRESH_SPIN_MS = 920;
 
@@ -2099,7 +2100,12 @@ function handlePullRefreshEnd() {
   if (!state.pullRefresh.tracking) return;
   const shouldRefresh = state.pullRefresh.armed;
   resetPullRefreshIndicator({ keepVisible: shouldRefresh });
-  if (shouldRefresh) refreshVisibleData({ includeStops: true }).finally(resetPullRefreshIndicator);
+  if (!shouldRefresh) return;
+
+  triggerLogoRefreshSpin();
+  refreshVisibleData({ includeStops: true }).finally(() => {
+    holdPullRefreshIndicator();
+  });
 }
 
 function updatePullRefreshIndicator(distance, armed) {
@@ -2123,14 +2129,23 @@ function resetPullRefreshIndicator(options = {}) {
   if (options.keepVisible) {
     elements.pullRefreshIndicator.style.setProperty("--pull-offset", "62px");
     elements.pullRefreshIndicator.classList.add("is-visible", "is-refreshing");
-    elements.pullRefreshIndicator.classList.remove("is-armed");
+    elements.pullRefreshIndicator.classList.remove("is-armed", "is-complete");
     elements.pullRefreshIndicator.querySelector("span").textContent = "Refreshing";
     return;
   }
 
   elements.pullRefreshIndicator.style.removeProperty("--pull-offset");
-  elements.pullRefreshIndicator.classList.remove("is-visible", "is-armed", "is-refreshing");
+  elements.pullRefreshIndicator.classList.remove("is-visible", "is-armed", "is-refreshing", "is-complete");
   elements.pullRefreshIndicator.querySelector("span").textContent = "Pull to refresh";
+}
+
+function holdPullRefreshIndicator() {
+  if (!elements.pullRefreshIndicator) return;
+  elements.pullRefreshIndicator.style.setProperty("--pull-offset", "62px");
+  elements.pullRefreshIndicator.classList.add("is-visible", "is-complete");
+  elements.pullRefreshIndicator.classList.remove("is-armed", "is-refreshing");
+  elements.pullRefreshIndicator.querySelector("span").textContent = "Updated";
+  setTimeout(() => resetPullRefreshIndicator(), PULL_REFRESH_HOLD_MS);
 }
 
 elements.searchInput.addEventListener("input", handleSearchInput);

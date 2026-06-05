@@ -131,13 +131,14 @@ p {
 
 .refresh-button svg {
   flex: 0 0 auto;
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   fill: none;
   stroke: var(--accent-dark);
-  stroke-width: 2.3;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+  overflow: visible;
 }
 
 .refresh-button.is-refreshing svg,
@@ -173,7 +174,8 @@ p {
   transform: translate(-50%, var(--pull-offset, 0px));
 }
 
-.pull-refresh-indicator.is-armed {
+.pull-refresh-indicator.is-armed,
+.pull-refresh-indicator.is-complete {
   border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
   background: #eef8f5;
 }
@@ -183,9 +185,10 @@ p {
   height: 16px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 2.3;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+  overflow: visible;
 }
 
 @keyframes refreshSpin {
