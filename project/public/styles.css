@@ -1285,6 +1285,7 @@ button:focus {
   display: grid;
   gap: 7px;
   min-width: 0;
+  padding-left: calc(var(--directions-badge-width) + var(--directions-leg-gap));
 }
 
 .directions-stop-trail {

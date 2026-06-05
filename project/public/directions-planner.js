@@ -7,7 +7,12 @@ export const DIRECTIONS_PLANNER_DEFAULTS = {
   defaultWaitSeconds: 300,
   transferPenaltySeconds: 90,
   boardingBufferSeconds: 30,
-  catchGraceSeconds: 120,
+  catchGraceSeconds: 180,
+  tightFirstBusPrioritySeconds: 180,
+  soonFirstBusPrioritySeconds: 90,
+  soonFirstBusWindowSeconds: 180,
+  walkingDifferencePriorityKm: 0.2,
+  routeScoreDifferencePrioritySeconds: 180,
   accessRadiusKm: 0.45,
   minCandidateStops: 3,
   candidateStopLimit: 6,
@@ -61,10 +66,15 @@ export async function planDirections(input) {
     arrivalsByStop,
     settings
   };
-  const result = shortestPath(context);
+  const firstResult = shortestPath(context);
 
-  if (!result) throw new Error("No NUS shuttle route found between these locations.");
-  const alternatives = busAlternativePlans(context, result);
+  if (!firstResult) throw new Error("No NUS shuttle route found between these locations.");
+  const rankedPlans = uniquePlans([firstResult, ...busAlternativePlans(context)])
+    .sort(comparePlans);
+  const result = rankedPlans[0];
+  const alternatives = rankedPlans
+    .filter((plan) => !samePlan(result, plan))
+    .slice(0, settings.maxAlternativePlans);
   if (alternatives.length) result.alternatives = alternatives;
   return result;
 }
@@ -227,10 +237,12 @@ function busEdges(stop, state, elapsedSeconds, context) {
       const stops = service.stops.slice(index, nextIndex + 1);
       const durationSeconds = wait.waitSeconds + transferPenaltySeconds + rideSeconds;
       const waitCostSeconds = wait.waitSeconds * (state.hasBus ? context.settings.waitCostMultiplier : context.settings.firstBusWaitCostMultiplier);
+      const prioritySeconds = firstBusDeparturePrioritySeconds(wait, state, context.settings);
+      const costSeconds = Math.max(0, waitCostSeconds + transferPenaltySeconds + rideSeconds - prioritySeconds);
       edges.push({
         toKey: stateKey(toStop.id, service.key, true, service.key),
         durationSeconds,
-        costSeconds: waitCostSeconds + transferPenaltySeconds + rideSeconds,
+        costSeconds,
         leg: {
           type: "bus",
           serviceKey: service.key,
@@ -239,10 +251,11 @@ function busEdges(stop, state, elapsedSeconds, context) {
           toStop,
           stops,
           durationSeconds,
-          costSeconds: waitCostSeconds + transferPenaltySeconds + rideSeconds,
+          costSeconds,
           waitSeconds: wait.waitSeconds,
           rideSeconds,
           transferPenaltySeconds,
+          prioritySeconds,
           boardingArrivals: wait.boardingArrivals,
           selectedArrival: wait.selectedArrival,
           catchStatus: wait.catchStatus,
@@ -267,6 +280,14 @@ function hasCloserDownstreamBoardingCandidate(service, startIndex, endIndex, cur
   }
 
   return false;
+}
+
+function firstBusDeparturePrioritySeconds(wait, state, settings) {
+  if (state.hasBus || !wait.selectedArrival) return 0;
+  if (wait.catchStatus === "tight") return settings.tightFirstBusPrioritySeconds;
+  if (wait.catchStatus !== "comfortable") return 0;
+  if (wait.waitSeconds > settings.soonFirstBusWindowSeconds) return 0;
+  return settings.soonFirstBusPrioritySeconds * (1 - wait.waitSeconds / settings.soonFirstBusWindowSeconds);
 }
 
 function resultFromPath(previous, context, totalSeconds, scoreSeconds) {
@@ -301,7 +322,7 @@ function resultFromPath(previous, context, totalSeconds, scoreSeconds) {
   };
 }
 
-function busAlternativePlans(context, primaryPlan) {
+function busAlternativePlans(context) {
   const plans = [];
   const serviceKeys = [...new Set(context.services.map((service) => service.key).filter(Boolean))];
   const unconstrainedBus = shortestPath(context, { requireBus: true });
@@ -312,16 +333,28 @@ function busAlternativePlans(context, primaryPlan) {
     if (plan) plans.push(plan);
   }
 
-  return uniquePlans(plans)
-    .filter((plan) => !samePlan(primaryPlan, plan))
-    .sort(comparePlans)
-    .slice(0, context.settings.maxAlternativePlans);
+  return plans;
 }
 
 function comparePlans(left, right) {
-  if (left.scoreSeconds !== right.scoreSeconds) return left.scoreSeconds - right.scoreSeconds;
-  if (left.walkingDistanceKm !== right.walkingDistanceKm) return left.walkingDistanceKm - right.walkingDistanceKm;
-  return left.totalSeconds - right.totalSeconds;
+  const leftScore = planRankingScoreSeconds(left);
+  const rightScore = planRankingScoreSeconds(right);
+  const walkDifferenceKm = (left.walkingDistanceKm || 0) - (right.walkingDistanceKm || 0);
+  if (Math.abs(walkDifferenceKm) >= DIRECTIONS_PLANNER_DEFAULTS.walkingDifferencePriorityKm) return walkDifferenceKm;
+  if ((left.transfers || 0) !== (right.transfers || 0)) return (left.transfers || 0) - (right.transfers || 0);
+  if (left.totalSeconds !== right.totalSeconds) return left.totalSeconds - right.totalSeconds;
+  const scoreDifferenceSeconds = leftScore - rightScore;
+  if (Math.abs(scoreDifferenceSeconds) >= DIRECTIONS_PLANNER_DEFAULTS.routeScoreDifferencePrioritySeconds) return scoreDifferenceSeconds;
+  return scoreDifferenceSeconds;
+}
+
+function planRankingScoreSeconds(plan) {
+  return (plan.scoreSeconds ?? plan.totalSeconds) - firstBusPrioritySeconds(plan);
+}
+
+function firstBusPrioritySeconds(plan) {
+  const firstBusLeg = (plan.legs || []).find((leg) => leg.type === "bus");
+  return firstBusLeg?.prioritySeconds || 0;
 }
 
 function uniquePlans(plans) {

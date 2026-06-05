@@ -1192,10 +1192,15 @@ function groupDirectionsPlans(plans) {
     }
   }
 
-  return [...groupsByKey.values()].map((group) => ({
-    ...group,
-    plans: group.plans.sort((left, right) => left.totalSeconds - right.totalSeconds)
-  }));
+  return [...groupsByKey.values()]
+    .map((group) => {
+      const plans = group.plans.sort((left, right) => left.totalSeconds - right.totalSeconds);
+      return {
+        directions: plans[0],
+        plans
+      };
+    })
+    .sort((left, right) => left.directions.totalSeconds - right.directions.totalSeconds);
 }
 
 function directionsShapeKey(directions) {

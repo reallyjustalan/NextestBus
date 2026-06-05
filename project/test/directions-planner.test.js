@@ -20,7 +20,7 @@ test("selects the next catchable bus after walking to the stop", async () => {
     stops,
     services,
     arrivalsByStop: new Map([
-      ["A", [{ key: "nus:S", arrivals: [arrival(3), arrival(10)] }]]
+      ["A", [{ key: "nus:S", arrivals: [arrival(2), arrival(10)] }]]
     ]),
     options: defaultOptions
   });
@@ -46,6 +46,81 @@ test("keeps a slightly early arrival as a tight catch", async () => {
   const busLeg = result.legs.find((leg) => leg.type === "bus");
   assert.equal(busLeg.selectedArrival.minutes, 3);
   assert.equal(busLeg.catchStatus, "tight");
+});
+
+test("prioritizes a plausible tight first bus over a later easier boarding", async () => {
+  const close = stop("CLOSE", 1, 103, [{ key: "nus:LATE", source: "nus", name: "LATE" }]);
+  const hurry = stop("HURRY", 1.0012, 103, [{ key: "nus:TIGHT", source: "nus", name: "TIGHT" }]);
+  const end = stop("END", 1.005, 103, [
+    { key: "nus:LATE", source: "nus", name: "LATE" },
+    { key: "nus:TIGHT", source: "nus", name: "TIGHT" }
+  ]);
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("End", 1.005, 103),
+    stops: [close, hurry, end],
+    services: [
+      service("LATE", [close, end]),
+      service("TIGHT", [hurry, end])
+    ],
+    arrivalsByStop: new Map([
+      ["CLOSE", [{ key: "nus:LATE", arrivals: [arrival(10)] }]],
+      ["HURRY", [{ key: "nus:TIGHT", arrivals: [arrival(1)] }]]
+    ]),
+    options: defaultOptions
+  });
+
+  const busLeg = result.legs.find((leg) => leg.type === "bus");
+  assert.equal(busLeg.routeCode, "TIGHT");
+  assert.equal(busLeg.selectedArrival.minutes, 1);
+  assert.equal(busLeg.catchStatus, "tight");
+});
+
+test("prioritizes the faster arrival when walking and transfers are comparable", async () => {
+  const start = stop("START", 1, 103, [
+    { key: "nus:R2", source: "nus", name: "R2" },
+    { key: "nus:D1", source: "nus", name: "D1" }
+  ]);
+  const end = stop("END", 1.01, 103, [
+    { key: "nus:R2", source: "nus", name: "R2" },
+    { key: "nus:D1", source: "nus", name: "D1" }
+  ]);
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("End", 1.01, 103),
+    stops: [start, end],
+    services: [
+      service("R2", [start, end], {
+        route: {
+          path: [
+            pathPoint(1, 103, "START"),
+            pathPoint(1.006, 103),
+            pathPoint(1.01, 103, "END")
+          ]
+        }
+      }),
+      service("D1", [start, end], {
+        route: {
+          path: [
+            pathPoint(1, 103, "START"),
+            pathPoint(1.012, 103),
+            pathPoint(1.01, 103, "END")
+          ]
+        }
+      })
+    ],
+    arrivalsByStop: new Map([
+      ["START", [
+        { key: "nus:R2", arrivals: [arrival(9)] },
+        { key: "nus:D1", arrivals: [arrival(6)] }
+      ]]
+    ]),
+    options: defaultOptions
+  });
+
+  const busLeg = result.legs.find((leg) => leg.type === "bus");
+  assert.equal(busLeg.routeCode, "D1");
+  assert.equal(busLeg.selectedArrival.minutes, 6);
 });
 
 test("uses default wait when live arrivals are unavailable", async () => {
