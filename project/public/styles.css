@@ -106,17 +106,20 @@ p {
   align-items: center;
   gap: 5px;
   min-height: 26px;
-  border: 1px solid transparent;
-  border-radius: 999px;
+  border: 0;
   background: transparent;
   color: var(--muted);
-  padding: 0 5px 0 0;
+  padding: 0 4px 0 0;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
 }
 
 .refresh-button:hover,
 .refresh-button:focus {
-  border-color: var(--line);
-  background: #fff;
+  color: var(--accent-dark);
+  text-decoration-color: currentColor;
 }
 
 .refresh-button:disabled {
@@ -713,6 +716,11 @@ button:focus {
 .route-stop-eta.is-text {
   font-size: 15px;
   font-weight: 800;
+}
+
+.arrival-time.is-arriving,
+.route-stop-eta.is-arriving {
+  font-size: 22px;
 }
 
 .arrival-time.load-low {
@@ -1615,5 +1623,9 @@ button:focus {
 
   .arrival strong .eta-unit {
     font-size: 9px;
+  }
+
+  .arrival strong.is-arriving {
+    font-size: 18px;
   }
 }

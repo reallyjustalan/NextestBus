@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "nus-bus-shell-";
-const CACHE_NAME = "nus-bus-shell-v28";
+const CACHE_NAME = "nus-bus-shell-v30";
 const APP_SHELL = [
   "/",
   "/index.html",

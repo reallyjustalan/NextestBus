@@ -1451,7 +1451,8 @@ function renderEtaChip(display, minutes, className, title = "") {
   if (eta.unit) {
     return `<strong class="${escapeHtml(className)}"${titleAttr}><span class="eta-number">${escapeHtml(eta.value)}</span><span class="eta-unit">${escapeHtml(eta.unit)}</span></strong>`;
   }
-  return `<strong class="${escapeHtml(className)} is-text"${titleAttr}>${escapeHtml(eta.value)}</strong>`;
+  const stateClass = eta.value.toLowerCase() === "arr" ? " is-arriving" : "";
+  return `<strong class="${escapeHtml(className)} is-text${stateClass}"${titleAttr}>${escapeHtml(eta.value)}</strong>`;
 }
 
 function etaParts(display, minutes) {
