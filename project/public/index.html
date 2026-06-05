@@ -15,18 +15,47 @@
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
+    <div id="pullRefreshIndicator" class="pull-refresh-indicator" aria-hidden="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M20 12a8 8 0 1 1-2.34-5.66"></path>
+        <path d="M20 4v6h-6"></path>
+      </svg>
+      <span>Pull to refresh</span>
+    </div>
     <main class="app">
       <header class="app-header">
         <div class="header-top">
-          <button id="homeButton" class="brand" type="button" aria-label="Reset and return to all stops">
-            <span class="logo" aria-hidden="true">
-              <img src="/icons/icon.svg" alt="">
-            </span>
-            <div>
+          <div class="brand">
+            <button id="homeButton" class="brand-home" type="button" aria-label="Reset and return to all stops">
+              <span class="logo" aria-hidden="true">
+                <svg viewBox="0 0 512 512" aria-hidden="true">
+                  <rect width="512" height="512" rx="104" fill="#0f766e"></rect>
+                  <rect x="28" y="28" width="456" height="456" rx="82" fill="none" stroke="#58bbb2" stroke-width="10" opacity=".55"></rect>
+                  <g class="logo-bus" transform="translate(74 262)">
+                    <path d="M23 41c0-23 18-41 41-41h180c24 0 44 17 49 40l15 69h25c13 0 24 11 24 24v31c0 16-13 29-29 29H31c-17 0-31-14-31-31V64c0-13 10-23 23-23z" fill="#fff"></path>
+                    <path d="M64 36h45v58H64zm70 0h45v58h-45zm70 0h39c12 0 22 8 25 20l8 38h-72z" fill="#0b3f3a"></path>
+                    <path d="M313 125h42v36h-42zM0 125h37v36H0z" fill="#d8efea"></path>
+                    <circle cx="91" cy="193" r="36" fill="#0b3f3a"></circle>
+                    <circle cx="91" cy="193" r="21" fill="#fff"></circle>
+                    <circle cx="258" cy="193" r="36" fill="#0b3f3a"></circle>
+                    <circle cx="258" cy="193" r="21" fill="#fff"></circle>
+                  </g>
+                </svg>
+              </span>
+            </button>
+            <div class="brand-copy">
               <h1>NUS Bus Arrivals</h1>
-              <p id="loadStatus">Loading stops...</p>
+              <div class="status-row">
+                <button id="refreshButton" class="refresh-button" type="button" aria-label="Refresh arrival data">
+                  <span id="loadStatus">Loading stops...</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 12a8 8 0 1 1-2.34-5.66"></path>
+                    <path d="M20 4v6h-6"></path>
+                  </svg>
+                </button>
+              </div>
             </div>
-          </button>
+          </div>
           <nav class="header-nav" aria-label="Primary">
             <button id="mainPageHeaderLink" class="header-link" type="button">Stops</button>
             <button id="directionsHeaderLink" class="header-link" type="button">Directions</button>

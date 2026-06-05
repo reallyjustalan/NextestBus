@@ -4,6 +4,10 @@ const INSTALL_PROMPT_DISMISSED_KEY = "nusbus-install-prompt-dismissed";
 const REFRESH_INTERVAL_MS = 30000;
 const FRESHNESS_TICK_MS = 5000;
 const LOCATIONS_SOURCE = "https://map.nus.edu.sg/index.php/search/ajax_auto";
+const PULL_REFRESH_THRESHOLD_PX = 72;
+const PULL_REFRESH_MAX_PX = 98;
+const ARRIVAL_REFRESH_ANIMATION_MS = 900;
+const LOGO_REFRESH_SPIN_MS = 920;
 
 const state = {
   stops: [],
@@ -27,12 +31,21 @@ const state = {
   directionsLastRequestKey: "",
   isLoadingLocations: false,
   locationsLoadPromise: null,
+  pullRefresh: {
+    tracking: false,
+    startY: 0,
+    distance: 0,
+    armed: false
+  },
+  pendingArrivalRefreshAnimation: false,
   lastUpdatedAt: null,
   isRefreshing: false
 };
 
 let refreshTimerId = null;
 let freshnessTimerId = null;
+let arrivalRefreshAnimationTimer = null;
+let logoRefreshSpinTimer = null;
 let deferredInstallPrompt = null;
 const routeTimingFetches = new Set();
 const routeVehicleMemory = new Map();
@@ -43,6 +56,9 @@ const elements = {
   appHeader: document.querySelector(".app-header"),
   controls: document.querySelector(".controls"),
   homeButton: document.getElementById("homeButton"),
+  logo: document.querySelector(".logo"),
+  refreshButton: document.getElementById("refreshButton"),
+  pullRefreshIndicator: document.getElementById("pullRefreshIndicator"),
   mainPageHeaderLink: document.getElementById("mainPageHeaderLink"),
   directionsHeaderLink: document.getElementById("directionsHeaderLink"),
   installPrompt: document.getElementById("installPrompt"),
@@ -1015,7 +1031,7 @@ async function findDirections(event, options = {}) {
     return;
   }
 
-  if (requestKey && requestKey === state.directionsLastRequestKey && state.directionsResult) return;
+  if (!options.force && requestKey && requestKey === state.directionsLastRequestKey && state.directionsResult) return;
   state.directionsLastRequestKey = requestKey;
   state.directionsResult = null;
   state.directionsLoading = true;
@@ -1231,14 +1247,53 @@ function locationCategoryLabel(category) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-async function refreshVisibleData() {
+async function refreshStopsList() {
+  const data = await apiGet("/stops");
+  state.stops = data.stops || [];
+  markUpdated();
+  applyFilters();
+}
+
+async function refreshVisibleData(options = {}) {
   if (state.isRefreshing) return;
+  const includeStops = options.includeStops === true;
   if (!state.activeRouteKey && !state.openStopId) {
+    if (state.directionsResult && !elements.directionsView.hidden) {
+      state.isRefreshing = true;
+      updateStatus();
+      try {
+        await findDirections(null, { pushHistory: false, force: true });
+      } catch {
+        // Keep the last good route visible when a refresh fails.
+      } finally {
+        state.isRefreshing = false;
+        updateStatus();
+        flushPendingArrivalRefreshAnimation();
+      }
+      return;
+    }
+
+    if (includeStops) {
+      state.isRefreshing = true;
+      updateStatus();
+      try {
+        await refreshStopsList();
+      } catch {
+        // Keep the current stop list visible when a refresh fails.
+      } finally {
+        state.isRefreshing = false;
+        updateStatus();
+        flushPendingArrivalRefreshAnimation();
+      }
+      return;
+    }
+
     updateStatus();
     return;
   }
 
   state.isRefreshing = true;
+  updateStatus();
   try {
     if (state.activeRouteKey) {
       await refreshActiveRoute();
@@ -1250,7 +1305,13 @@ async function refreshVisibleData() {
   } finally {
     state.isRefreshing = false;
     updateStatus();
+    flushPendingArrivalRefreshAnimation();
   }
+}
+
+function handleManualRefresh() {
+  triggerLogoRefreshSpin();
+  refreshVisibleData({ includeStops: true });
 }
 
 async function refreshActiveRoute() {
@@ -1682,6 +1743,7 @@ async function loadStops() {
   try {
     const data = await apiGet("/stops");
     state.stops = data.stops || [];
+    markUpdated();
     applyFilters();
     if (isDirectionsHash()) {
       await openDirectionsView({ pushHistory: false, scroll: true });
@@ -1739,8 +1801,45 @@ function getCurrentPosition() {
 }
 
 function markUpdated() {
+  const hadPreviousUpdate = Boolean(state.lastUpdatedAt);
   state.lastUpdatedAt = Date.now();
   updateStatus();
+  if (!hadPreviousUpdate) return;
+  if (state.isRefreshing) {
+    state.pendingArrivalRefreshAnimation = true;
+    return;
+  }
+  triggerArrivalRefreshAnimation();
+}
+
+function triggerArrivalRefreshAnimation() {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  clearTimeout(arrivalRefreshAnimationTimer);
+  document.body.classList.remove("arrivals-just-refreshed");
+  requestAnimationFrame(() => {
+    document.body.classList.add("arrivals-just-refreshed");
+    arrivalRefreshAnimationTimer = setTimeout(() => {
+      document.body.classList.remove("arrivals-just-refreshed");
+    }, ARRIVAL_REFRESH_ANIMATION_MS);
+  });
+}
+
+function flushPendingArrivalRefreshAnimation() {
+  if (!state.pendingArrivalRefreshAnimation) return;
+  state.pendingArrivalRefreshAnimation = false;
+  triggerArrivalRefreshAnimation();
+}
+
+function triggerLogoRefreshSpin() {
+  if (!elements.logo || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  clearTimeout(logoRefreshSpinTimer);
+  elements.logo.classList.remove("is-spinning");
+  requestAnimationFrame(() => {
+    elements.logo.classList.add("is-spinning");
+    logoRefreshSpinTimer = setTimeout(() => {
+      elements.logo.classList.remove("is-spinning");
+    }, LOGO_REFRESH_SPIN_MS);
+  });
 }
 
 function freshnessLabel() {
@@ -1755,11 +1854,19 @@ function freshnessLabel() {
 function updateStatus() {
   const freshnessText = freshnessLabel();
   elements.loadStatus.textContent = freshnessText || "Updating...";
+  updateRefreshUi();
   if (!state.sortOrigin) {
     elements.locationButton.setAttribute("aria-label", "Use current location");
     return;
   }
   elements.locationButton.setAttribute("aria-label", "Clear current location sort");
+}
+
+function updateRefreshUi() {
+  if (!elements.refreshButton) return;
+  elements.refreshButton.disabled = state.isRefreshing;
+  elements.refreshButton.classList.toggle("is-refreshing", state.isRefreshing);
+  elements.refreshButton.setAttribute("aria-label", state.isRefreshing ? "Refreshing arrival data" : "Refresh arrival data");
 }
 
 function loadPinnedStopIds() {
@@ -1953,9 +2060,83 @@ function isIosDevice() {
   return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
+function isPullRefreshAvailable() {
+  return window.matchMedia("(max-width: 620px) and (pointer: coarse)").matches;
+}
+
+function isPullRefreshIgnoredTarget(target) {
+  return Boolean(target.closest("input, textarea, select"));
+}
+
+function handlePullRefreshStart(event) {
+  if (!isPullRefreshAvailable() || state.isRefreshing || window.scrollY > 0 || event.touches.length !== 1) return;
+  if (isPullRefreshIgnoredTarget(event.target)) return;
+
+  state.pullRefresh.tracking = true;
+  state.pullRefresh.startY = event.touches[0].clientY;
+  state.pullRefresh.distance = 0;
+  state.pullRefresh.armed = false;
+}
+
+function handlePullRefreshMove(event) {
+  if (!state.pullRefresh.tracking || event.touches.length !== 1) return;
+
+  const distance = event.touches[0].clientY - state.pullRefresh.startY;
+  if (distance <= 0) {
+    resetPullRefreshIndicator();
+    return;
+  }
+
+  event.preventDefault();
+  const easedDistance = Math.min(PULL_REFRESH_MAX_PX, distance * 0.62);
+  const armed = distance >= PULL_REFRESH_THRESHOLD_PX;
+  state.pullRefresh.distance = easedDistance;
+  state.pullRefresh.armed = armed;
+  updatePullRefreshIndicator(easedDistance, armed);
+}
+
+function handlePullRefreshEnd() {
+  if (!state.pullRefresh.tracking) return;
+  const shouldRefresh = state.pullRefresh.armed;
+  resetPullRefreshIndicator({ keepVisible: shouldRefresh });
+  if (shouldRefresh) refreshVisibleData({ includeStops: true }).finally(resetPullRefreshIndicator);
+}
+
+function updatePullRefreshIndicator(distance, armed) {
+  if (!elements.pullRefreshIndicator) return;
+  document.body.classList.add("is-pulling-refresh");
+  elements.pullRefreshIndicator.style.setProperty("--pull-offset", `${Math.round(Math.min(distance, PULL_REFRESH_MAX_PX))}px`);
+  elements.pullRefreshIndicator.classList.add("is-visible");
+  elements.pullRefreshIndicator.classList.toggle("is-armed", armed);
+  elements.pullRefreshIndicator.classList.toggle("is-refreshing", false);
+  elements.pullRefreshIndicator.querySelector("span").textContent = armed ? "Release to refresh" : "Pull to refresh";
+}
+
+function resetPullRefreshIndicator(options = {}) {
+  state.pullRefresh.tracking = false;
+  state.pullRefresh.startY = 0;
+  state.pullRefresh.distance = 0;
+  state.pullRefresh.armed = false;
+  document.body.classList.remove("is-pulling-refresh");
+  if (!elements.pullRefreshIndicator) return;
+
+  if (options.keepVisible) {
+    elements.pullRefreshIndicator.style.setProperty("--pull-offset", "62px");
+    elements.pullRefreshIndicator.classList.add("is-visible", "is-refreshing");
+    elements.pullRefreshIndicator.classList.remove("is-armed");
+    elements.pullRefreshIndicator.querySelector("span").textContent = "Refreshing";
+    return;
+  }
+
+  elements.pullRefreshIndicator.style.removeProperty("--pull-offset");
+  elements.pullRefreshIndicator.classList.remove("is-visible", "is-armed", "is-refreshing");
+  elements.pullRefreshIndicator.querySelector("span").textContent = "Pull to refresh";
+}
+
 elements.searchInput.addEventListener("input", handleSearchInput);
 elements.locationButton.addEventListener("click", useBrowserLocation);
 elements.homeButton.addEventListener("click", resetBrowsingExperience);
+elements.refreshButton.addEventListener("click", handleManualRefresh);
 elements.mainPageHeaderLink.addEventListener("click", resetBrowsingExperience);
 elements.directionsHeaderLink.addEventListener("click", () => {
   openDirectionsView({ pushHistory: !isDirectionsHash() });
@@ -2044,6 +2225,10 @@ elements.directionsResult.addEventListener("click", (event) => {
 });
 window.addEventListener("popstate", handleHistoryChange);
 window.addEventListener("hashchange", handleHashChange);
+window.addEventListener("touchstart", handlePullRefreshStart, { passive: true });
+window.addEventListener("touchmove", handlePullRefreshMove, { passive: false });
+window.addEventListener("touchend", handlePullRefreshEnd, { passive: true });
+window.addEventListener("touchcancel", () => resetPullRefreshIndicator(), { passive: true });
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refreshVisibleData();
 });
