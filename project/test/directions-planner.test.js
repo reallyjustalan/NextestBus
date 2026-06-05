@@ -123,6 +123,78 @@ test("prioritizes the faster arrival when walking and transfers are comparable",
   assert.equal(busLeg.selectedArrival.minutes, 6);
 });
 
+test("filters transfer alternatives unless they save meaningful time", async () => {
+  const start = stop("START", 1, 103, [
+    { key: "nus:DIRECT", source: "nus", name: "DIRECT" },
+    { key: "nus:FIRST", source: "nus", name: "FIRST" }
+  ]);
+  const middle = stop("MIDDLE", 1.005, 103, [
+    { key: "nus:FIRST", source: "nus", name: "FIRST" },
+    { key: "nus:SECOND", source: "nus", name: "SECOND" }
+  ]);
+  const end = stop("END", 1.01, 103, [
+    { key: "nus:DIRECT", source: "nus", name: "DIRECT" },
+    { key: "nus:SECOND", source: "nus", name: "SECOND" }
+  ]);
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("End", 1.01, 103),
+    stops: [start, middle, end],
+    services: [
+      service("DIRECT", [start, end]),
+      service("FIRST", [start, middle]),
+      service("SECOND", [middle, end])
+    ],
+    arrivalsByStop: new Map([
+      ["START", [
+        { key: "nus:DIRECT", arrivals: [arrival(3)] },
+        { key: "nus:FIRST", arrivals: [arrival(0)] }
+      ]],
+      ["MIDDLE", [{ key: "nus:SECOND", arrivals: [arrival(0)] }]]
+    ]),
+    options: defaultOptions
+  });
+
+  assert.equal(result.transfers, 0);
+  assert.ok(!result.alternatives?.some((plan) => plan.transfers > 0));
+});
+
+test("filters transfer routes that walk back to an already used bus stop", async () => {
+  const start = stop("START", 1, 103, [
+    { key: "nus:DIRECT", source: "nus", name: "DIRECT" },
+    { key: "nus:OUT", source: "nus", name: "OUT" },
+    { key: "nus:CONTINUE", source: "nus", name: "CONTINUE" }
+  ]);
+  const away = stop("AWAY", 1.002, 103, [{ key: "nus:OUT", source: "nus", name: "OUT" }]);
+  const end = stop("END", 1.01, 103, [
+    { key: "nus:DIRECT", source: "nus", name: "DIRECT" },
+    { key: "nus:CONTINUE", source: "nus", name: "CONTINUE" }
+  ]);
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("End", 1.01, 103),
+    stops: [start, away, end],
+    services: [
+      service("DIRECT", [start, end]),
+      service("OUT", [start, away]),
+      service("CONTINUE", [start, end])
+    ],
+    arrivalsByStop: new Map([
+      ["START", [
+        { key: "nus:DIRECT", arrivals: [arrival(10)] },
+        { key: "nus:OUT", arrivals: [arrival(0)] },
+        { key: "nus:CONTINUE", arrivals: [arrival(0)] }
+      ]]
+    ]),
+    options: { ...defaultOptions, transferWalkRadiusKm: 0.3 }
+  });
+
+  assert.ok(!result.alternatives?.some((plan) => {
+    const walkedBackToStart = plan.legs.some((leg) => leg.type === "walk" && leg.to.id === "START");
+    return plan.transfers > 0 && walkedBackToStart;
+  }));
+});
+
 test("uses default wait when live arrivals are unavailable", async () => {
   const stops = [stop("A", 1, 103), stop("B", 1.02, 103)];
   const services = [service("S", [stops[0], stops[1]])];

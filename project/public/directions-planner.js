@@ -13,6 +13,8 @@ export const DIRECTIONS_PLANNER_DEFAULTS = {
   soonFirstBusWindowSeconds: 180,
   walkingDifferencePriorityKm: 0.2,
   routeScoreDifferencePrioritySeconds: 180,
+  maxTransfers: 1,
+  transferAlternativeMinimumSavingsSeconds: 300,
   accessRadiusKm: 0.45,
   minCandidateStops: 3,
   candidateStopLimit: 6,
@@ -69,7 +71,7 @@ export async function planDirections(input) {
   const firstResult = shortestPath(context);
 
   if (!firstResult) throw new Error("No NUS shuttle route found between these locations.");
-  const rankedPlans = uniquePlans([firstResult, ...busAlternativePlans(context)])
+  const rankedPlans = practicalPlans(uniquePlans([firstResult, ...busAlternativePlans(context)]), settings)
     .sort(comparePlans);
   const result = rankedPlans[0];
   const alternatives = rankedPlans
@@ -346,6 +348,41 @@ function comparePlans(left, right) {
   const scoreDifferenceSeconds = leftScore - rightScore;
   if (Math.abs(scoreDifferenceSeconds) >= DIRECTIONS_PLANNER_DEFAULTS.routeScoreDifferencePrioritySeconds) return scoreDifferenceSeconds;
   return scoreDifferenceSeconds;
+}
+
+function practicalPlans(plans, settings) {
+  const sanePlans = plans.filter((plan) => isReasonablePlan(plan, settings));
+  const candidates = sanePlans.length ? sanePlans : plans;
+  const noTransferPlans = candidates.filter((plan) => (plan.transfers || 0) === 0);
+  if (!noTransferPlans.length) return candidates;
+
+  const bestNoTransferSeconds = Math.min(...noTransferPlans.map((plan) => plan.totalSeconds));
+  return candidates.filter((plan) => {
+    if ((plan.transfers || 0) === 0) return true;
+    return plan.totalSeconds + settings.transferAlternativeMinimumSavingsSeconds < bestNoTransferSeconds;
+  });
+}
+
+function isReasonablePlan(plan, settings) {
+  if ((plan.transfers || 0) > settings.maxTransfers) return false;
+  return !hasTransferBacktrack(plan);
+}
+
+function hasTransferBacktrack(plan) {
+  const visitedBusStops = new Set();
+
+  for (const leg of plan.legs || []) {
+    if (leg.type === "bus") {
+      for (const stop of leg.stops || []) {
+        if (stop?.id) visitedBusStops.add(stop.id);
+      }
+      continue;
+    }
+
+    if (leg.type === "walk" && visitedBusStops.has(leg.to?.id)) return true;
+  }
+
+  return false;
 }
 
 function planRankingScoreSeconds(plan) {

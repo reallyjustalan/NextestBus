@@ -1200,7 +1200,14 @@ function groupDirectionsPlans(plans) {
         plans
       };
     })
-    .sort((left, right) => left.directions.totalSeconds - right.directions.totalSeconds);
+    .sort((left, right) => compareDirectionsPlansForDisplay(left.directions, right.directions));
+}
+
+function compareDirectionsPlansForDisplay(left, right) {
+  const walkDifferenceKm = (left.walkingDistanceKm || 0) - (right.walkingDistanceKm || 0);
+  if (Math.abs(walkDifferenceKm) >= 0.2) return walkDifferenceKm;
+  if ((left.transfers || 0) !== (right.transfers || 0)) return (left.transfers || 0) - (right.transfers || 0);
+  return left.totalSeconds - right.totalSeconds;
 }
 
 function directionsShapeKey(directions) {
