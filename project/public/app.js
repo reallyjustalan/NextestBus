@@ -5,6 +5,7 @@ const PINNED_STOPS_KEY = "nusbus-pinned-stops";
 const INSTALL_PROMPT_DISMISSED_KEY = "nusbus-install-prompt-dismissed";
 const REFRESH_INTERVAL_MS = 30000;
 const FRESHNESS_TICK_MS = 5000;
+const DIRECTIONS_ARRIVALS_MAX_AGE_MS = REFRESH_INTERVAL_MS * 2;
 const LOCATIONS_SOURCE = "https://map.nus.edu.sg/index.php/search/ajax_auto";
 const PULL_REFRESH_THRESHOLD_PX = 72;
 const PULL_REFRESH_MAX_PX = 98;
@@ -1087,8 +1088,22 @@ async function loadDirectionPlannerService(serviceKey) {
   return loadRouteService(serviceKey, { silent: true });
 }
 
+function isFreshArrivalsEntry(cached) {
+  const updatedAt = Date.parse(cached?.data?.updatedAt || "");
+  return Number.isFinite(updatedAt) && Date.now() - updatedAt <= DIRECTIONS_ARRIVALS_MAX_AGE_MS;
+}
+
+function freshDirectionsArrivalsByStop() {
+  const fresh = new Map();
+  for (const [stopId, cached] of state.arrivalsByStop) {
+    if (isFreshArrivalsEntry(cached)) fresh.set(stopId, cached);
+  }
+  return fresh;
+}
+
 async function loadDirectionsStopDetails(stopId) {
-  return loadStopDetails(stopId, { silent: true });
+  const force = !isFreshArrivalsEntry(state.arrivalsByStop.get(stopId));
+  return loadStopDetails(stopId, { silent: true, force });
 }
 
 async function findDirections(event, options = {}) {
@@ -1143,7 +1158,7 @@ async function findDirections(event, options = {}) {
       toItem,
       stops: state.stops,
       services,
-      arrivalsByStop: state.arrivalsByStop,
+      arrivalsByStop: freshDirectionsArrivalsByStop(),
       getArrivalsForStop: loadDirectionsStopDetails
     });
     state.directionsResult = {

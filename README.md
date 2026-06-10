@@ -119,9 +119,11 @@ The planner runs Dijkstra search over that graph. Edge weights are estimated sec
 
 - resolve the selected `From` and `To` items from autocomplete
 - load all NUS shuttle route services needed for planning
-- reuse `state.arrivalsByStop` when live stop data is already available
-- fetch live arrivals for origin candidate stops when needed
+- reuse `state.arrivalsByStop` only while the cached stop data is still fresh (within two refresh intervals of its `updatedAt`)
+- fetch live arrivals for origin candidate stops when needed, forcing a refetch when the cache is stale or holds an earlier error
 - pass the data into `planDirections(input)`
+
+Freshness matters because the planner reasons in relative minutes from "now". Reusing an arrival snapshot from several minutes ago would tell the user to catch a bus that already left, and the periodic directions refresh would keep re-planning with the same stale snapshot instead of new timings.
 
 `directions-planner.js` remains responsible for the routing logic:
 
