@@ -1,0 +1,9 @@
+{
+  "name": "nus-nextbus-repo",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix project run dev --",
+    "test": "npm --prefix project run test --",
+    "deploy": "npm --prefix project run deploy --"
+  }
+}

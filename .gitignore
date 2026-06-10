@@ -14,7 +14,7 @@ build/
 astro/
 
 # Wrangler / Cloudflare local files
-.wrangler/
+**/.wrangler/
 .dev.vars
 *.local
 
@@ -52,6 +52,3 @@ coverage/
 # Temporary files
 tmp/
 temp/
-
-
-project/.wrangler/
