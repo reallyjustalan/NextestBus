@@ -15,6 +15,8 @@ export const DIRECTIONS_PLANNER_DEFAULTS = {
   routeScoreDifferencePrioritySeconds: 180,
   maxTransfers: 1,
   transferAlternativeMinimumSavingsSeconds: 300,
+  sameLocationThresholdKm: 0.01,
+  directWalkAccessToleranceKm: 0.01,
   accessRadiusKm: 0.45,
   minCandidateStops: 3,
   candidateStopLimit: 6,
@@ -44,6 +46,9 @@ export async function planDirections(input) {
   if (!input.fromItem || !input.toItem) throw new Error("Select both a start and an end point from the suggestions.");
   if (!fromCoords) throw new Error(`No map location is available for ${input.fromItem.title}.`);
   if (!toCoords) throw new Error(`No map location is available for ${input.toItem.title}.`);
+  if (isSameLocation(input.fromItem, input.toItem, fromCoords, toCoords, settings)) {
+    return alreadyTherePlan(input.fromItem, input.toItem);
+  }
   if (!stops.length) throw new Error("No NUS shuttle stops are available for routing.");
 
   const originCandidates = candidateStopsForPoint(fromCoords, stops, settings);
@@ -320,6 +325,7 @@ function resultFromPath(previous, context, totalSeconds, scoreSeconds) {
     scoreSeconds,
     walkingDistanceKm,
     transfers: Math.max(0, busLegs.length - 1),
+    hasBusTiming: busLegs.length ? busLegs.some(hasLiveBusTiming) : true,
     legs: compressedLegs
   };
 }
@@ -339,6 +345,7 @@ function busAlternativePlans(context) {
 }
 
 function comparePlans(left, right) {
+  if (hasUntimedBusPlan(left) !== hasUntimedBusPlan(right)) return hasUntimedBusPlan(left) ? 1 : -1;
   const leftScore = planRankingScoreSeconds(left);
   const rightScore = planRankingScoreSeconds(right);
   const walkDifferenceKm = (left.walkingDistanceKm || 0) - (right.walkingDistanceKm || 0);
@@ -350,9 +357,17 @@ function comparePlans(left, right) {
   return scoreDifferenceSeconds;
 }
 
+function hasUntimedBusPlan(plan) {
+  return plan.legs?.some((leg) => leg.type === "bus") && !plan.hasBusTiming;
+}
+
+function hasLiveBusTiming(leg) {
+  return Boolean(leg.selectedArrival) || (leg.boardingArrivals || []).some((arrival) => Number.isFinite(Number(arrival.minutes)));
+}
+
 function practicalPlans(plans, settings) {
   const sanePlans = plans.filter((plan) => isReasonablePlan(plan, settings));
-  const candidates = sanePlans.length ? sanePlans : plans;
+  const candidates = walkOnlyPracticalPlans(sanePlans.length ? sanePlans : plans, settings);
   const noTransferPlans = candidates.filter((plan) => (plan.transfers || 0) === 0);
   if (!noTransferPlans.length) return candidates;
 
@@ -361,6 +376,25 @@ function practicalPlans(plans, settings) {
     if ((plan.transfers || 0) === 0) return true;
     return plan.totalSeconds + settings.transferAlternativeMinimumSavingsSeconds < bestNoTransferSeconds;
   });
+}
+
+function walkOnlyPracticalPlans(plans, settings) {
+  const directWalkPlan = plans
+    .filter((plan) => isDirectWalkPlan(plan))
+    .sort((left, right) => left.totalSeconds - right.totalSeconds)[0];
+  if (!directWalkPlan) return plans;
+
+  const directWalkDistanceKm = directWalkPlan.walkingDistanceKm || 0;
+  return plans.filter((plan) => {
+    if (plan === directWalkPlan) return true;
+    if (!plan.legs?.some((leg) => leg.type === "bus")) return true;
+    return (plan.walkingDistanceKm || 0) + settings.directWalkAccessToleranceKm < directWalkDistanceKm;
+  });
+}
+
+function isDirectWalkPlan(plan) {
+  const legs = plan.legs || [];
+  return legs.length === 1 && legs[0].type === "walk" && !plan.alternatives?.length;
 }
 
 function isReasonablePlan(plan, settings) {
@@ -639,6 +673,29 @@ function walkLeg(from, to, distanceKm, settings) {
     distanceKm,
     durationSeconds: estimateWalkingTime(distanceKm, settings)
   };
+}
+
+function alreadyTherePlan(fromItem, toItem) {
+  return {
+    estimated: true,
+    kind: "already-there",
+    message: "You are already there. This may be our fastest route yet.",
+    fromItem,
+    toItem,
+    fromStop: null,
+    toStop: null,
+    totalSeconds: 0,
+    scoreSeconds: 0,
+    walkingDistanceKm: 0,
+    transfers: 0,
+    hasBusTiming: true,
+    legs: []
+  };
+}
+
+function isSameLocation(fromItem, toItem, fromCoords, toCoords, settings) {
+  if (fromItem?.id && toItem?.id && fromItem.id === toItem.id) return true;
+  return haversine(fromCoords, toCoords) <= settings.sameLocationThresholdKm;
 }
 
 function compactPlace(place) {

@@ -11,6 +11,21 @@ const defaultOptions = {
   transferWalkRadiusKm: 0.2
 };
 
+test("returns an already-there plan for the same location", async () => {
+  const result = await planDirections({
+    fromItem: place("AS6", 1, 103),
+    toItem: place("AS6", 1, 103),
+    stops: [],
+    services: [],
+    arrivalsByStop: new Map(),
+    options: defaultOptions
+  });
+
+  assert.equal(result.kind, "already-there");
+  assert.equal(result.totalSeconds, 0);
+  assert.equal(result.legs.length, 0);
+});
+
 test("selects the next catchable bus after walking to the stop", async () => {
   const stops = [stop("A", 1, 103), stop("B", 1.02, 103)];
   const services = [service("S", [stops[0], stops[1]])];
@@ -121,6 +136,41 @@ test("prioritizes the faster arrival when walking and transfers are comparable",
   const busLeg = result.legs.find((leg) => leg.type === "bus");
   assert.equal(busLeg.routeCode, "D1");
   assert.equal(busLeg.selectedArrival.minutes, 6);
+});
+
+test("sorts bus routes without live timings below timed bus routes", async () => {
+  const start = stop("START", 1, 103, [
+    { key: "nus:LIVE", source: "nus", name: "LIVE" },
+    { key: "nus:QUIET", source: "nus", name: "QUIET" }
+  ]);
+  const end = stop("END", 1.01, 103, [
+    { key: "nus:LIVE", source: "nus", name: "LIVE" },
+    { key: "nus:QUIET", source: "nus", name: "QUIET" }
+  ]);
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("End", 1.01, 103),
+    stops: [start, end],
+    services: [
+      service("LIVE", [start, end]),
+      service("QUIET", [start, end])
+    ],
+    arrivalsByStop: new Map([
+      ["START", [
+        { key: "nus:LIVE", arrivals: [arrival(8)] },
+        { key: "nus:QUIET", arrivals: [] }
+      ]]
+    ]),
+    options: { ...defaultOptions, defaultWaitSeconds: 0 }
+  });
+
+  const busLeg = result.legs.find((leg) => leg.type === "bus");
+  assert.equal(busLeg.routeCode, "LIVE");
+  assert.equal(result.hasBusTiming, true);
+  assert.ok(result.alternatives?.some((plan) => {
+    const alternativeBusLeg = plan.legs.find((leg) => leg.type === "bus");
+    return alternativeBusLeg?.routeCode === "QUIET" && plan.hasBusTiming === false;
+  }));
 });
 
 test("filters transfer alternatives unless they save meaningful time", async () => {
@@ -320,10 +370,27 @@ test("chooses direct walking for short trips", async () => {
 
   assert.equal(result.legs.filter((leg) => leg.type === "bus").length, 0);
   assert.equal(result.legs[0].type, "walk");
-  assert.ok(result.alternatives?.some((plan) => plan.legs.some((leg) => leg.type === "bus")));
 });
 
-test("can prefer a faster transfer over a long single route", async () => {
+test("does not show bus alternatives when total bus-route walking is longer than direct walking", async () => {
+  const closeBoarding = stop("BOARD", 1.0005, 103);
+  const farAlighting = stop("ALIGHT", 1.002, 103);
+  const destinationStop = stop("DEST", 1.001, 103);
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("Nearby", 1.001, 103),
+    stops: [closeBoarding, farAlighting, destinationStop],
+    services: [service("S", [closeBoarding, farAlighting])],
+    arrivalsByStop: new Map(),
+    options: defaultOptions
+  });
+
+  assert.equal(result.legs.length, 1);
+  assert.equal(result.legs[0].type, "walk");
+  assert.equal(result.alternatives, undefined);
+});
+
+test("keeps a no-transfer route primary while still surfacing a much faster transfer alternative", async () => {
   const a = stop("A", 1, 103);
   const b = stop("B", 1.01, 103);
   const d = stop("D", 1.02, 103);
@@ -349,7 +416,10 @@ test("can prefer a faster transfer over a long single route", async () => {
     options: defaultOptions
   });
 
-  assert.deepEqual(result.legs.filter((leg) => leg.type === "bus").map((leg) => leg.routeCode), ["F1", "F2"]);
+  assert.deepEqual(result.legs.filter((leg) => leg.type === "bus").map((leg) => leg.routeCode), ["SLOW"]);
+  assert.ok(result.alternatives?.some((plan) => {
+    return JSON.stringify(plan.legs.filter((leg) => leg.type === "bus").map((leg) => leg.routeCode)) === JSON.stringify(["F1", "F2"]);
+  }));
 });
 
 test("lists slower overlapping bus services as alternatives", async () => {

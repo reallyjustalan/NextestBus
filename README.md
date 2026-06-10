@@ -20,9 +20,10 @@ The frontend currently uses:
 GET /stops
 GET /stops/:stopId
 GET /services/:serviceKey
-GET /directions?fromStopId=...&toStopId=...
 GET /api/locations
 ```
+
+The upstream `/directions` endpoint exists, but the frontend does not use it for optimal campus routing. It can return a path between selected stops, but it does not reason about walking to nearby or opposite stops, live-arrival tradeoffs, route overlaps, or whether a different boarding stop would be better for a venue-to-venue trip.
 
 The route data can also be embedded inside stop arrival responses, so the app merges service data from `/services/:serviceKey` with service data found while loading stops. `/api/locations` returns the local `project/public/data/nus-map-locations.json` dataset for directions autocomplete and nearest-stop resolution. That file is generated from the NUS campus map autocomplete endpoint at `https://map.nus.edu.sg/index.php/search/ajax_auto`; map-provided bus stop records, lecture theatres, and classroom-like seminar/tutorial records are excluded because the app already loads bus stops from the NUSBus API and directions autocomplete should target campus places rather than class venues.
 
@@ -33,10 +34,13 @@ project/
   public/
     index.html              Static app shell
     app.js                  Frontend state, rendering, routing, geolocation, PWA prompt
+    directions-planner.js   DOM-free client-side directions planner
     styles.css              App styling
     sw.js                   Service worker for PWA shell caching
     manifest.webmanifest    PWA manifest
     icons/                  App icons
+  test/
+    directions-planner.test.js
   src/
     index.js                Cloudflare Worker proxy and static asset handler
   wrangler.toml             Cloudflare configuration
@@ -89,6 +93,280 @@ The frontend keeps state in memory:
 - `activeRouteKey`: currently opened route, if any
 - `sortOrigin`: browser geolocation coordinates, if enabled
 - `routeVehicleMemory`: short-lived memory of live bus locations
+
+## Directions Planning Paradigm
+
+Directions are planned in the browser by `project/public/directions-planner.js`, not by the upstream `/directions` endpoint. The module is intentionally DOM-free so it can be tested independently and called from `app.js` with stops, route services, selected locations, and live arrivals.
+
+The core dilemma is that campus travel is not just "take a route between two known bus stops." A user can start from any NUS venue or stop, walk to several possible nearby stops, cross to an opposite stop, wait for live buses, transfer, or skip the bus and walk directly. The upstream API can provide route paths, but it does not choose the globally best combination of walking, waiting, boarding, riding, and alighting.
+
+The app therefore treats directions as a lightweight graph-search problem:
+
+```text
+origin location
+  -> walk edges to candidate origin stops
+  -> bus edges along NUS shuttle service routes
+  -> transfer-walk edges between nearby stops
+  -> walk edges from candidate destination stops
+  -> destination location
+```
+
+The planner runs Dijkstra search over that graph. Edge weights are estimated seconds, but the planner also keeps a separate route-ranking score so that display order can reflect user experience rather than only raw clock time.
+
+### Planner Inputs
+
+`app.js` remains responsible for UI resolution and data loading:
+
+- resolve the selected `From` and `To` items from autocomplete
+- load all NUS shuttle route services needed for planning
+- reuse `state.arrivalsByStop` when live stop data is already available
+- fetch live arrivals for origin candidate stops when needed
+- pass the data into `planDirections(input)`
+
+`directions-planner.js` remains responsible for the routing logic:
+
+- choose candidate stops around the origin and destination coordinates
+- build the route graph from NUS shuttle services only
+- run Dijkstra search
+- estimate walking, waiting, riding, transfers, and total duration
+- return normalized `walk` and `bus` legs for rendering
+- return alternatives so the UI can show useful bus options even when walking is fastest
+
+### Candidate Stops
+
+Candidate stops are chosen by distance from the location coordinates. The planner includes stops within the access radius and always keeps a small minimum set of nearest stops so sparse areas still get route options.
+
+This is why venue directions can consider an opposite stop or a nearby downstream stop rather than blindly using only the nearest named bus stop.
+
+### Walking Time
+
+Walking time is estimated from Haversine distance with a walking distance factor:
+
+```text
+estimated walking seconds =
+  distanceKm * walkingDistanceFactor / walkingSpeedKmh * 3600
+```
+
+The distance factor acknowledges that people do not walk in a perfectly straight line across campus. Walking is still an estimate, not a map-routed pedestrian path.
+
+### Bus Ride Time
+
+Bus segment duration is estimated from the service route geometry when route path points are available. If geometry is missing, the planner falls back to stop-to-stop distance with a road distance factor.
+
+This is deliberately lightweight. We do not have reliable historical travel times between every stop pair, so the planner uses physical route length as a proxy. Dwell time is added per segment.
+
+### Live Arrivals And Catchability
+
+Live arrival times are used for the first boarding decision when available. The planner first accounts for walking time to the candidate stop, then checks whether the user can catch the bus.
+
+The chosen behavior is:
+
+- if the user can comfortably walk there before the bus, use that arrival
+- if the user is slightly late but inside the `catchGraceSeconds` window, keep it as a `tight` catch
+- if the bus is too early, skip it and try the next arrival
+- if no usable live arrival exists, use `defaultWaitSeconds`
+
+This supports the "maybe I can run for it" case without pretending every missed bus is catchable. Tight catches are shown in the UI as tight catches instead of being hidden.
+
+### First-Bus Wait Versus Route Quality
+
+One of the hardest tradeoffs is first-bus waiting time.
+
+If first-bus wait time is fully included in route search, the planner can choose physically silly routes:
+
+```text
+walk away from the destination
+board an earlier bus
+ride through or past a better boarding point
+walk longer at the end
+```
+
+That is bad UX because users generally prefer waiting at the sensible nearby stop over walking backward just to catch a bus sooner.
+
+The current decision is:
+
+- first-bus wait contributes to the displayed `totalSeconds`
+- first-bus wait has little or no base cost in the Dijkstra route-shape score
+- transfer waits still count because mid-route waiting affects the connection
+- plausible tight first buses receive a bounded ranking boost
+- final card ordering prefers faster `totalSeconds` when walking distance and transfers are comparable
+
+This splits the problem into two ideas:
+
+```text
+What is a sane route shape?
+What option gets the user there fastest among sane route shapes?
+```
+
+### Avoiding Regressive Boarding
+
+The planner blocks a first bus edge when that same service will pass through a closer origin candidate before the alighting stop.
+
+Example:
+
+```text
+Do not walk from Central Library to an upstream stop
+just to board a bus that then passes Central Library.
+```
+
+This prevents live-arrival timing from making the user walk backward along the same route.
+
+### Same-Service Continuation
+
+The planner distinguishes between:
+
+```text
+continuing on the same physical service
+boarding another bus with the same service code
+```
+
+If the search is already on `D1`, a following `D1` edge from the next stop is treated as continuation: zero additional wait, no transfer, and no "Board after transfer" note. Adjacent same-service bus legs are compressed into one displayed bus leg.
+
+Walking or transferring clears the continuation state. If the user walks to another stop and boards `D1` again, that is still a real boarding.
+
+This prevents directions like:
+
+```text
+take D1 from A to B
+get off
+take D1 from B to C
+```
+
+when the correct behavior is simply:
+
+```text
+stay on D1 from A to C
+```
+
+### Direct Walking
+
+The planner always considers direct walking from origin to destination unless a bus route is explicitly required for an alternative. For short trips, direct walking can be the primary result.
+
+Bus options are still generated as alternatives because a bus can be more comfortable than walking, especially in heat or rain, and live arrivals can make the bus faster in practice.
+
+There are two hard boundary cases:
+
+- if the origin and destination are the same place, the app does not run route finding and shows an "already there" message
+- if a bus option involves more total walking than simply walking to the destination, bus alternatives are suppressed and only the walking route is shown
+
+### Alternatives And Overlapping Routes
+
+The planner generates more than one bus option:
+
+- the best unconstrained bus route
+- the best route starting with each available service
+- slower overlapping services where they follow the same physical path
+
+The app does not hide a bus option just because it arrives later. It may place it lower, but keeping it visible is useful because live arrival data can be wrong and some routes overlap.
+
+Transfers are treated differently. Transfers inside NUS are uncommon because the shuttle network is designed to make most campus trips possible with one bus ride plus walking. Transfer routes are therefore capped and filtered:
+
+- plans above `maxTransfers` are discarded
+- if a no-transfer route exists, a transfer alternative must save a meaningful amount of time before it is shown
+- transfer plans that walk back to a bus stop already used by the route are discarded as backtracking
+
+This keeps "funny" routes out of the UI, such as riding away from Ventus, walking back to Ventus, then boarding another bus from Ventus.
+
+### Final Plan Ranking
+
+The current ranking logic is intentionally pragmatic:
+
+1. Prefer less walking only when the walking difference is meaningful.
+2. Prefer fewer transfers.
+3. Otherwise prefer the lower displayed `totalSeconds`.
+4. Use route-shape score only as a tie-breaker.
+
+This is why, when two options have the same walking distance and no transfers, the bus that arrives first and gets the user there sooner should be shown first.
+
+## Directions Display Decisions
+
+Directions render as cards with a concise summary and normalized legs.
+
+The summary shows:
+
+```text
+total duration
+transfer count, only when there is at least one transfer
+walking distance as an emphasized badge
+less walking, when one visible option has a meaningfully shorter walk
+```
+
+The summary is deliberately user-facing. It uses the displayed estimated duration, including wait, not just the internal route-shape score.
+
+Zero-transfer routes omit the transfer text because `0 transfers` adds noise without helping the user choose. When a slower option is ranked above a faster one because it involves much less walking, the walk badge makes that tradeoff visible instead of making the ordering look arbitrary.
+
+### Walk And Bus Legs
+
+Walking legs show:
+
+- a walk badge
+- start and end labels
+- walking duration
+- walking distance
+
+Bus legs show:
+
+- route badge
+- start and end stops
+- stop count
+- the first three arrival chips
+- a timing note such as `Catch the 6 min bus - 7 min ride`
+- the stop trail
+
+Tight catches are labeled as tight catches.
+
+If a bus route has no live timings for its boarding service, it can still be shown as a possible route, but it is treated as not recommended:
+
+- the card is sorted below timed bus and walking options
+- the card header and badges are muted
+- the timing note says live bus timings are unavailable
+
+This avoids recommending shuttle routes that may not be running at that time.
+
+### Grouping Duplicate Routes
+
+The UI groups directions by physical leg shape. If two services take the same stop sequence between the same boarding and alighting stops, they are displayed in one card instead of duplicating the whole route.
+
+Within a grouped bus leg, each service gets its own aligned row:
+
+```text
+D1  timings and note
+R1  timings and note
+```
+
+This avoids repeated cards such as "Central Library -> Ventus" when every option brings the user through the same physical route.
+
+Grouped cards are ordered by the fastest representative plan, so a coalesced option with an earlier useful bus appears before a slower one.
+
+### Route Badges
+
+Route badges reuse the service color data when available. When color data is missing, the app falls back to the accent green.
+
+In directions, service route badges such as `D1` and `A2` are clickable and open the full route view. The larger walk/bus mode icon at the left of a card is decorative and does not navigate.
+
+Stacked route badges must align with their corresponding timing rows. The CSS therefore treats each coalesced service as a two-column row:
+
+```text
+route badge column | service timing/details column
+```
+
+This prevents `D1` and `R1` badges from drifting vertically away from their own timing chips.
+
+### Direction Mode Icons
+
+Direction cards show a compact mode graphic:
+
+- walking-only: person walking
+- bus-only: bus
+- mixed walk and bus: person walking plus bus
+
+The app uses a tiny inline SVG sprite with only the Font Awesome `walking` and `bus-alt` paths. This was chosen over loading the Font Awesome kit because the app only needs two icons, should work locally and offline, and should avoid a runtime script that scans the DOM or downloads unused icon assets.
+
+### Board After Transfer
+
+`Board after transfer` is only shown when there was a previous bus leg. It is not shown after the initial walk to the first stop.
+
+Same-service continuation is not a transfer and should not produce this note.
 
 ## Main Page Paradigm
 
@@ -345,3 +623,7 @@ The app was built around fast, readable access to bus arrivals:
 - Bus marker positions are visual indicators, not precise maps.
 - The app does not estimate vehicle positions from normal ETAs alone.
 - The first stop intentionally never receives a bus marker, even if the API returns data that could otherwise be interpreted as one.
+- Directions use estimated walking and riding time, not map-routed pedestrian paths or historical per-stop bus travel times.
+- Directions use live arrivals only where the app has loaded arrival data, mostly around candidate origin stops.
+- Tight-catch routing is a UX heuristic. It can suggest a bus the user may miss if they walk slowly or the bus leaves early.
+- Route alternatives are ranked for practical usefulness, not mathematically guaranteed real-world optimality under every live-data error.

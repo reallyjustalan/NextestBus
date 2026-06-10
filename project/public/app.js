@@ -656,6 +656,17 @@ async function openStopFromRoute(stopId) {
   });
 }
 
+async function openRouteFromDirections(serviceKey) {
+  if (!serviceKey) return;
+  try {
+    if (!state.routeServicesByKey.has(serviceKey)) await loadRouteService(serviceKey, { silent: true });
+    openRouteView(serviceKey);
+  } catch (error) {
+    state.directionsError = error.message || "Could not load route.";
+    renderDirectionsResult();
+  }
+}
+
 async function handleHistoryChange(event) {
   const historyState = event.state || { view: "stops" };
   if (historyState.view === "directions" || isDirectionsHash()) {
@@ -1017,6 +1028,30 @@ function hasRoutableDirectionItem(item) {
   return candidateStopsForPoint(item.coordinates, state.stops.filter(isRoutableNusStop)).length > 0;
 }
 
+function isSameDirectionLocation(fromItem, toItem) {
+  if (!fromItem || !toItem) return false;
+  if (fromItem.id && toItem.id && fromItem.id === toItem.id) return true;
+  if (!fromItem.coordinates || !toItem.coordinates) return false;
+  return haversine(fromItem.coordinates, toItem.coordinates) <= 0.01;
+}
+
+function alreadyThereDirections(fromItem, toItem) {
+  return {
+    estimated: true,
+    kind: "already-there",
+    message: "You are already there. This may be our fastest route yet.",
+    fromItem,
+    toItem,
+    fromStop: null,
+    toStop: null,
+    totalSeconds: 0,
+    scoreSeconds: 0,
+    walkingDistanceKm: 0,
+    transfers: 0,
+    legs: []
+  };
+}
+
 async function loadDirectionPlannerServices() {
   const serviceKeys = [
     ...new Set(
@@ -1064,15 +1099,33 @@ async function findDirections(event, options = {}) {
   const toItem = resolveDirectionItem("to");
   const requestKey = fromItem && toItem ? `${fromItem.id}->${toItem.id}` : "";
 
-  if (!fromItem || !toItem || !hasRoutableDirectionItem(fromItem) || !hasRoutableDirectionItem(toItem)) {
+  if (!fromItem || !toItem) {
     state.directionsResult = null;
-    if (fromItem && !hasRoutableDirectionItem(fromItem)) {
-      state.directionsError = `No nearby bus stop location is available for ${fromItem.title}.`;
-    } else if (toItem && !hasRoutableDirectionItem(toItem)) {
-      state.directionsError = `No nearby bus stop location is available for ${toItem.title}.`;
-    } else {
-      state.directionsError = "Select both a start and an end point from the suggestions.";
-    }
+    state.directionsError = "Select both a start and an end point from the suggestions.";
+    renderDirectionsResult();
+    return;
+  }
+
+  if (isSameDirectionLocation(fromItem, toItem)) {
+    state.directionsLastRequestKey = requestKey;
+    state.directionsResult = {
+      directions: alreadyThereDirections(fromItem, toItem),
+      fromItem,
+      toItem
+    };
+    state.directionsLoading = false;
+    elements.directionsSuggestions.hidden = true;
+    elements.directionsSuggestions.replaceChildren();
+    renderDirectionsResult();
+    if (options.pushHistory !== false) pushDirectionsGuideHistory(fromItem, toItem);
+    return;
+  }
+
+  if (!hasRoutableDirectionItem(fromItem) || !hasRoutableDirectionItem(toItem)) {
+    state.directionsResult = null;
+    state.directionsError = !hasRoutableDirectionItem(fromItem)
+      ? `No nearby bus stop location is available for ${fromItem.title}.`
+      : `No nearby bus stop location is available for ${toItem.title}.`;
     renderDirectionsResult();
     return;
   }
@@ -1174,9 +1227,37 @@ function renderDirectionsResult() {
 
 function renderDirectionsPlan(result) {
   const { directions, fromItem, toItem } = result;
+  if (directions.kind === "already-there") return renderAlreadyThereDirectionsPlan(directions, fromItem, toItem);
   const planGroups = groupDirectionsPlans([directions, ...(directions.alternatives || [])]);
+  const walkingContext = directionsWalkingContext(planGroups);
 
-  return planGroups.map((group, index) => renderDirectionsPlanCard(group, fromItem, toItem, index)).join("");
+  return planGroups.map((group, index) => renderDirectionsPlanCard(group, fromItem, toItem, index, walkingContext)).join("");
+}
+
+function renderAlreadyThereDirectionsPlan(directions, fromItem, toItem) {
+  return `
+    <section class="directions-plan-card">
+      <header class="directions-plan-head">
+        ${renderDirectionsModeGraphic("walk")}
+        <div>
+          <h3>${escapeHtml("You are already there")}</h3>
+          <p>${escapeHtml(directions.message || "No route needed.")}</p>
+        </div>
+      </header>
+      <div class="directions-leg-list">
+        <article class="directions-leg">
+          <span class="route-badge directions-leg-route directions-leg-route-icon" role="img" aria-label="Already there">
+            ${renderDirectionsIcon("walk", "directions-leg-icon-svg")}
+          </span>
+          <div class="directions-leg-body">
+            <strong class="directions-walk-title">${escapeHtml(fromItem.title)} → ${escapeHtml(toItem.title)}</strong>
+            <span class="directions-walk-distance">0 m</span>
+            <p class="directions-transfer-note">No navigation needed.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+  `;
 }
 
 function groupDirectionsPlans(plans) {
@@ -1203,11 +1284,30 @@ function groupDirectionsPlans(plans) {
     .sort((left, right) => compareDirectionsPlansForDisplay(left.directions, right.directions));
 }
 
+function directionsWalkingContext(groups) {
+  const distances = groups
+    .map((group) => group.directions.walkingDistanceKm || 0)
+    .filter((distance) => Number.isFinite(distance));
+  if (distances.length < 2) return { shouldFlagLowestWalking: false, lowestWalkingKm: 0 };
+
+  const lowestWalkingKm = Math.min(...distances);
+  const highestWalkingKm = Math.max(...distances);
+  return {
+    lowestWalkingKm,
+    shouldFlagLowestWalking: highestWalkingKm - lowestWalkingKm >= 0.15
+  };
+}
+
 function compareDirectionsPlansForDisplay(left, right) {
+  if (hasUntimedBusDirections(left) !== hasUntimedBusDirections(right)) return hasUntimedBusDirections(left) ? 1 : -1;
   const walkDifferenceKm = (left.walkingDistanceKm || 0) - (right.walkingDistanceKm || 0);
   if (Math.abs(walkDifferenceKm) >= 0.2) return walkDifferenceKm;
   if ((left.transfers || 0) !== (right.transfers || 0)) return (left.transfers || 0) - (right.transfers || 0);
   return left.totalSeconds - right.totalSeconds;
+}
+
+function hasUntimedBusDirections(directions) {
+  return directions.legs?.some((leg) => leg.type === "bus") && !directions.hasBusTiming;
 }
 
 function directionsShapeKey(directions) {
@@ -1220,12 +1320,12 @@ function directionsShapeKey(directions) {
   }).join("|");
 }
 
-function renderDirectionsPlanCard(group, fromItem, toItem, optionIndex = 0) {
+function renderDirectionsPlanCard(group, fromItem, toItem, optionIndex = 0, walkingContext = null) {
   const directions = group.directions;
   const legs = directions.legs || [];
   const busLegs = legs.filter((leg) => leg.type === "bus");
   const routeSummary = renderDirectionsSummary(group.plans);
-  const routeMeta = renderDirectionsMeta(group.plans);
+  const routeMeta = renderDirectionsMeta(group.plans, walkingContext);
   const mode = directionsModeForPlan(directions);
 
   if (!busLegs.length) {
@@ -1235,7 +1335,7 @@ function renderDirectionsPlanCard(group, fromItem, toItem, optionIndex = 0) {
           ${renderDirectionsModeGraphic(mode)}
           <div>
             <h3>${escapeHtml(routeSummary)}</h3>
-            <p>${routeMeta}</p>
+            <p class="directions-plan-meta">${routeMeta}</p>
           </div>
         </header>
         <div class="directions-leg-list">
@@ -1251,7 +1351,7 @@ function renderDirectionsPlanCard(group, fromItem, toItem, optionIndex = 0) {
         ${renderDirectionsModeGraphic(mode)}
         <div>
           <h3>${escapeHtml(routeSummary)}</h3>
-          <p>${routeMeta}</p>
+          <p class="directions-plan-meta">${routeMeta}</p>
         </div>
       </header>
       <div class="directions-leg-list">
@@ -1321,21 +1421,43 @@ function renderDirectionsStopAdvisory(notes) {
   `;
 }
 
-function renderDirectionsMeta(plans) {
+function renderDirectionsMeta(plans, walkingContext = null) {
   const walk = slashValues(plans.map((directions) => distanceLabel(directions.walkingDistanceKm || 0)));
-  const transfers = slashValues(plans.map((directions) => formatCount(directions.transfers || 0, "transfer")));
-  const hasManyTransfers = plans.some((directions) => directions.transfers > 1);
-  const transferHtml = hasManyTransfers ? `<span class="directions-transfer-count">${escapeHtml(transfers)}</span>` : escapeHtml(transfers);
-  return `${transferHtml} - ${escapeHtml(walk)} walk`;
+  const transferValues = plans
+    .map((directions) => directions.transfers || 0)
+    .filter((count) => count > 0)
+    .map((count) => formatCount(count, "transfer"));
+  const transfers = slashValues(transferValues);
+  const representativeWalkKm = plans[0]?.walkingDistanceKm || 0;
+  const isLowestWalking = walkingContext?.shouldFlagLowestWalking
+    && Math.abs(representativeWalkKm - walkingContext.lowestWalkingKm) < 0.01;
+
+  return [
+    transfers ? `<span class="directions-transfer-count">${escapeHtml(transfers)}</span>` : "",
+    `<span class="directions-walk-meta">${escapeHtml(walk)} walk</span>`,
+    isLowestWalking ? `<span class="directions-walk-note">less walking</span>` : ""
+  ].filter(Boolean).join("");
 }
 
 function slashValues(values) {
   return [...new Set(values.filter(Boolean))].join("/");
 }
 
-function renderDirectionsRouteBadge(routeCode, className = "") {
+function renderDirectionsRouteBadge(routeCode, serviceKey = "", className = "") {
   const color = routeColorForCode(routeCode);
-  return `<span class="route-badge ${escapeHtml(className)}" style="background:${escapeHtml(color.background)};color:${escapeHtml(color.text)}">${escapeHtml(routeCode)}</span>`;
+  const label = routeCode || serviceKey;
+  if (!serviceKey) {
+    return `<span class="route-badge ${escapeHtml(className)}" style="background:${escapeHtml(color.background)};color:${escapeHtml(color.text)}">${escapeHtml(label)}</span>`;
+  }
+  return `
+    <button
+      class="route-badge directions-route-link ${escapeHtml(className)}"
+      type="button"
+      data-service-key="${escapeHtml(serviceKey)}"
+      style="background:${escapeHtml(color.background)};color:${escapeHtml(color.text)}"
+      aria-label="Show ${escapeHtml(label)} route"
+    >${escapeHtml(label)}</button>
+  `;
 }
 
 function renderDirectionsLeg(leg, index, group = null) {
@@ -1391,10 +1513,11 @@ function busLegVariantsForGroup(group, legIndex) {
 
 function renderDirectionsBusVariant(leg) {
   const arrivalChips = renderDirectionsArrivalChips(leg.boardingArrivals || []);
+  const unavailableClass = directionsLegHasLiveTiming(leg) ? "" : " is-timing-unavailable";
   return `
-    <div class="directions-service-option">
+    <div class="directions-service-option${unavailableClass}">
       <div class="directions-service-row">
-        ${renderDirectionsRouteBadge(leg.routeCode, "directions-leg-route")}
+        ${renderDirectionsRouteBadge(leg.routeCode, leg.serviceKey, "directions-leg-route")}
         <div class="directions-arrival-chips" aria-label="${escapeHtml(leg.routeCode)} arrival timings">
           ${arrivalChips}
         </div>
@@ -1460,6 +1583,11 @@ function renderDirectionsArrivalChip(arrival) {
 
 function renderDirectionsPlaceholderChip() {
   return renderEtaChip("?", Number.NaN, "route-stop-eta is-muted is-placeholder", "Timing unavailable");
+}
+
+function directionsLegHasLiveTiming(leg) {
+  return Boolean(leg?.selectedArrival)
+    || (leg?.boardingArrivals || []).some((arrival) => Number.isFinite(Number(arrival.minutes)));
 }
 
 function renderDirectionsStopTrail(stops) {
@@ -2480,6 +2608,13 @@ elements.routeBody.addEventListener("click", (event) => {
   if (routeStopButton?.dataset.stopId) openStopFromRoute(routeStopButton.dataset.stopId);
 });
 elements.directionsResult.addEventListener("click", (event) => {
+  const routeLink = event.target.closest(".directions-route-link");
+  if (routeLink?.dataset.serviceKey) {
+    event.preventDefault();
+    openRouteFromDirections(routeLink.dataset.serviceKey);
+    return;
+  }
+
   const stopLink = event.target.closest(".directions-stop-link");
   if (!stopLink?.dataset.stopId) return;
   event.preventDefault();
