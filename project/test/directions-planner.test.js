@@ -394,12 +394,14 @@ test("keeps a no-transfer route primary while still surfacing a much faster tran
   const a = stop("A", 1, 103);
   const b = stop("B", 1.01, 103);
   const d = stop("D", 1.02, 103);
+  // The detour keeps SLOW meaningfully slower than the transfer pair without
+  // being so slow that walking partway and boarding mid-route beats it.
   const slow = service("SLOW", [a, d], {
     route: {
       path: [
         pathPoint(1, 103, "A"),
-        pathPoint(1, 103.08),
-        pathPoint(1.02, 103.08),
+        pathPoint(1, 103.025),
+        pathPoint(1.02, 103.025),
         pathPoint(1.02, 103, "D")
       ]
     }
@@ -447,6 +449,105 @@ test("lists slower overlapping bus services as alternatives", async () => {
 
   assert.equal(result.legs.find((leg) => leg.type === "bus").routeCode, "FAST");
   assert.ok(result.alternatives?.some((plan) => plan.legs.some((leg) => leg.type === "bus" && leg.routeCode === "SLOW")));
+});
+
+test("does not let a small walking advantage outrank a dramatically faster route", async () => {
+  const nearStop = stop("NEAR", 1.0001, 103, [{ key: "nus:SLOW", source: "nus", name: "SLOW" }]);
+  const farStop = stop("FAR", 1.003, 103, [{ key: "nus:FAST", source: "nus", name: "FAST" }]);
+  const endStop = stop("END", 1.02, 103, [
+    { key: "nus:SLOW", source: "nus", name: "SLOW" },
+    { key: "nus:FAST", source: "nus", name: "FAST" }
+  ]);
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("End", 1.02, 103),
+    stops: [nearStop, farStop, endStop],
+    services: [
+      // ~20 km of route geometry makes SLOW take far longer than FAST.
+      service("SLOW", [nearStop, endStop], {
+        route: {
+          path: [
+            pathPoint(1.0001, 103, "NEAR"),
+            pathPoint(1.0001, 103.09),
+            pathPoint(1.02, 103.09),
+            pathPoint(1.02, 103, "END")
+          ]
+        }
+      }),
+      service("FAST", [farStop, endStop])
+    ],
+    arrivalsByStop: new Map(),
+    options: defaultOptions
+  });
+
+  const busLeg = result.legs.find((leg) => leg.type === "bus");
+  assert.equal(busLeg.routeCode, "FAST");
+  assert.ok(result.alternatives?.some((plan) => {
+    return plan.legs.some((leg) => leg.type === "bus" && leg.routeCode === "SLOW");
+  }));
+});
+
+test("still prefers meaningfully less walking when only slightly slower", async () => {
+  const nearStop = stop("NEAR", 1.0001, 103, [{ key: "nus:NEARBUS", source: "nus", name: "NEARBUS" }]);
+  const farStop = stop("FAR", 1.003, 103, [{ key: "nus:FARBUS", source: "nus", name: "FARBUS" }]);
+  const endStop = stop("END", 1.02, 103, [
+    { key: "nus:NEARBUS", source: "nus", name: "NEARBUS" },
+    { key: "nus:FARBUS", source: "nus", name: "FARBUS" }
+  ]);
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("End", 1.02, 103),
+    stops: [nearStop, farStop, endStop],
+    services: [
+      // ~6.5 km of route geometry: a few minutes slower than FARBUS, but the
+      // boarding stop is right next to the start.
+      service("NEARBUS", [nearStop, endStop], {
+        route: {
+          path: [
+            pathPoint(1.0001, 103, "NEAR"),
+            pathPoint(1.0001, 103.02),
+            pathPoint(1.02, 103.02),
+            pathPoint(1.02, 103, "END")
+          ]
+        }
+      }),
+      service("FARBUS", [farStop, endStop])
+    ],
+    arrivalsByStop: new Map(),
+    options: defaultOptions
+  });
+
+  const busLeg = result.legs.find((leg) => leg.type === "bus");
+  assert.equal(busLeg.routeCode, "NEARBUS");
+});
+
+test("keeps the transfer penalty out of displayed leg and total durations", async () => {
+  const start = stop("START", 1, 103, [{ key: "nus:FIRST", source: "nus", name: "FIRST" }]);
+  const middle = stop("MIDDLE", 1.01, 103, [
+    { key: "nus:FIRST", source: "nus", name: "FIRST" },
+    { key: "nus:SECOND", source: "nus", name: "SECOND" }
+  ]);
+  const end = stop("END", 1.03, 103, [{ key: "nus:SECOND", source: "nus", name: "SECOND" }]);
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("End", 1.03, 103),
+    stops: [start, middle, end],
+    services: [
+      service("FIRST", [start, middle]),
+      service("SECOND", [middle, end])
+    ],
+    arrivalsByStop: new Map(),
+    options: { ...defaultOptions, transferPenaltySeconds: 120, maxTransfers: 1, transferAlternativeMinimumSavingsSeconds: 0 }
+  });
+
+  const transferPlan = [result, ...(result.alternatives || [])]
+    .find((plan) => (plan.transfers || 0) === 1);
+  assert.ok(transferPlan, "expected a one-transfer plan");
+  for (const leg of transferPlan.legs.filter((item) => item.type === "bus")) {
+    assert.equal(leg.durationSeconds, leg.waitSeconds + leg.rideSeconds);
+  }
+  const legSeconds = transferPlan.legs.reduce((total, leg) => total + leg.durationSeconds, 0);
+  assert.ok(Math.abs(transferPlan.totalSeconds - legSeconds) < 1);
 });
 
 test("falls back to stop distance when route path geometry is missing", async () => {
