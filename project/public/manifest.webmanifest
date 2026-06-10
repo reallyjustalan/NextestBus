@@ -1,7 +1,7 @@
 {
-  "name": "NUS Bus Arrivals",
-  "short_name": "NUS Bus",
-  "description": "A minimal NUS bus arrivals viewer.",
+  "name": "NUS Nextest Bus",
+  "short_name": "NUS Nextest Bus",
+  "description": "A minimal NUS Nextest Bus viewer.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
