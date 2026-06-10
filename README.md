@@ -280,6 +280,8 @@ This is why, when two options have the same walking distance and no transfers, t
 
 The same comparator is used for planner ranking and for directions card display ordering, so the primary plan and the card order cannot disagree.
 
+The transfer penalty is part of the route-shape score only. It never inflates the displayed leg durations or `totalSeconds`, so the total a user sees always equals the sum of the walking, waiting, and riding parts shown on the card.
+
 ## Directions Display Decisions
 
 Directions render as cards with a concise summary and normalized legs.

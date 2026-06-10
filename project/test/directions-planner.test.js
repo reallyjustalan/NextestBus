@@ -521,6 +521,35 @@ test("still prefers meaningfully less walking when only slightly slower", async 
   assert.equal(busLeg.routeCode, "NEARBUS");
 });
 
+test("keeps the transfer penalty out of displayed leg and total durations", async () => {
+  const start = stop("START", 1, 103, [{ key: "nus:FIRST", source: "nus", name: "FIRST" }]);
+  const middle = stop("MIDDLE", 1.01, 103, [
+    { key: "nus:FIRST", source: "nus", name: "FIRST" },
+    { key: "nus:SECOND", source: "nus", name: "SECOND" }
+  ]);
+  const end = stop("END", 1.03, 103, [{ key: "nus:SECOND", source: "nus", name: "SECOND" }]);
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("End", 1.03, 103),
+    stops: [start, middle, end],
+    services: [
+      service("FIRST", [start, middle]),
+      service("SECOND", [middle, end])
+    ],
+    arrivalsByStop: new Map(),
+    options: { ...defaultOptions, transferPenaltySeconds: 120, maxTransfers: 1, transferAlternativeMinimumSavingsSeconds: 0 }
+  });
+
+  const transferPlan = [result, ...(result.alternatives || [])]
+    .find((plan) => (plan.transfers || 0) === 1);
+  assert.ok(transferPlan, "expected a one-transfer plan");
+  for (const leg of transferPlan.legs.filter((item) => item.type === "bus")) {
+    assert.equal(leg.durationSeconds, leg.waitSeconds + leg.rideSeconds);
+  }
+  const legSeconds = transferPlan.legs.reduce((total, leg) => total + leg.durationSeconds, 0);
+  assert.ok(Math.abs(transferPlan.totalSeconds - legSeconds) < 1);
+});
+
 test("falls back to stop distance when route path geometry is missing", async () => {
   const a = stop("A", 1, 103);
   const b = stop("B", 1.01, 103);

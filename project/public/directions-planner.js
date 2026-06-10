@@ -242,7 +242,10 @@ function busEdges(stop, state, elapsedSeconds, context) {
       const rideSeconds = rideSecondsBetween(service, index, nextIndex, context.settings);
       if (!Number.isFinite(rideSeconds) || rideSeconds <= 0) continue;
       const stops = service.stops.slice(index, nextIndex + 1);
-      const durationSeconds = wait.waitSeconds + transferPenaltySeconds + rideSeconds;
+      // The transfer penalty is a route-shape preference, not travel time, so it
+      // only affects costSeconds. Keeping it out of durationSeconds keeps the
+      // displayed total equal to the sum of the displayed wait/ride/walk parts.
+      const durationSeconds = wait.waitSeconds + rideSeconds;
       const waitCostSeconds = wait.waitSeconds * (state.hasBus ? context.settings.waitCostMultiplier : context.settings.firstBusWaitCostMultiplier);
       const prioritySeconds = firstBusDeparturePrioritySeconds(wait, state, context.settings);
       const costSeconds = Math.max(0, waitCostSeconds + transferPenaltySeconds + rideSeconds - prioritySeconds);
