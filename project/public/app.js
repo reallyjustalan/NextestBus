@@ -1,4 +1,4 @@
-import { candidateStopsForPoint, planDirections } from "./directions-planner.js";
+import { candidateStopsForPoint, comparePlans, planDirections } from "./directions-planner.js";
 
 const API_BASE = "https://api.nusbus.com/api";
 const PINNED_STOPS_KEY = "nusbus-pinned-stops";
@@ -1299,15 +1299,8 @@ function directionsWalkingContext(groups) {
 }
 
 function compareDirectionsPlansForDisplay(left, right) {
-  if (hasUntimedBusDirections(left) !== hasUntimedBusDirections(right)) return hasUntimedBusDirections(left) ? 1 : -1;
-  const walkDifferenceKm = (left.walkingDistanceKm || 0) - (right.walkingDistanceKm || 0);
-  if (Math.abs(walkDifferenceKm) >= 0.2) return walkDifferenceKm;
-  if ((left.transfers || 0) !== (right.transfers || 0)) return (left.transfers || 0) - (right.transfers || 0);
-  return left.totalSeconds - right.totalSeconds;
-}
-
-function hasUntimedBusDirections(directions) {
-  return directions.legs?.some((leg) => leg.type === "bus") && !directions.hasBusTiming;
+  // Reuse the planner's ranking so card order cannot drift from plan ranking.
+  return comparePlans(left, right);
 }
 
 function directionsShapeKey(directions) {

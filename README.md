@@ -271,12 +271,14 @@ This keeps "funny" routes out of the UI, such as riding away from Ventus, walkin
 
 The current ranking logic is intentionally pragmatic:
 
-1. Prefer less walking only when the walking difference is meaningful.
+1. Prefer less walking only when the walking difference is meaningful, and only while the less-walking option is not dramatically slower. By default a route can be at most `walkingPriorityMaxSlowerSeconds` (10 minutes) slower before saving a few hundred metres of walking stops justifying it.
 2. Prefer fewer transfers.
 3. Otherwise prefer the lower displayed `totalSeconds`.
 4. Use route-shape score only as a tie-breaker.
 
-This is why, when two options have the same walking distance and no transfers, the bus that arrives first and gets the user there sooner should be shown first.
+This is why, when two options have the same walking distance and no transfers, the bus that arrives first and gets the user there sooner should be shown first. It is also why a route that waits half an hour for a quiet service cannot sit above a route that leaves now just because it walks one stop less.
+
+The same comparator is used for planner ranking and for directions card display ordering, so the primary plan and the card order cannot disagree.
 
 ## Directions Display Decisions
 

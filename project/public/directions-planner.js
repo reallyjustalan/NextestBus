@@ -12,7 +12,7 @@ export const DIRECTIONS_PLANNER_DEFAULTS = {
   soonFirstBusPrioritySeconds: 90,
   soonFirstBusWindowSeconds: 180,
   walkingDifferencePriorityKm: 0.2,
-  routeScoreDifferencePrioritySeconds: 180,
+  walkingPriorityMaxSlowerSeconds: 600,
   maxTransfers: 1,
   transferAlternativeMinimumSavingsSeconds: 300,
   sameLocationThresholdKm: 0.01,
@@ -77,7 +77,7 @@ export async function planDirections(input) {
 
   if (!firstResult) throw new Error("No NUS shuttle route found between these locations.");
   const rankedPlans = practicalPlans(uniquePlans([firstResult, ...busAlternativePlans(context)]), settings)
-    .sort(comparePlans);
+    .sort((left, right) => comparePlans(left, right, settings));
   const result = rankedPlans[0];
   const alternatives = rankedPlans
     .filter((plan) => !samePlan(result, plan))
@@ -344,17 +344,18 @@ function busAlternativePlans(context) {
   return plans;
 }
 
-function comparePlans(left, right) {
+export function comparePlans(left, right, options = {}) {
+  const settings = { ...DIRECTIONS_PLANNER_DEFAULTS, ...options };
   if (hasUntimedBusPlan(left) !== hasUntimedBusPlan(right)) return hasUntimedBusPlan(left) ? 1 : -1;
-  const leftScore = planRankingScoreSeconds(left);
-  const rightScore = planRankingScoreSeconds(right);
   const walkDifferenceKm = (left.walkingDistanceKm || 0) - (right.walkingDistanceKm || 0);
-  if (Math.abs(walkDifferenceKm) >= DIRECTIONS_PLANNER_DEFAULTS.walkingDifferencePriorityKm) return walkDifferenceKm;
+  const totalDifferenceSeconds = (left.totalSeconds || 0) - (right.totalSeconds || 0);
+  if (Math.abs(walkDifferenceKm) >= settings.walkingDifferencePriorityKm) {
+    const lessWalkingSlowerBySeconds = walkDifferenceKm < 0 ? totalDifferenceSeconds : -totalDifferenceSeconds;
+    if (lessWalkingSlowerBySeconds <= settings.walkingPriorityMaxSlowerSeconds) return walkDifferenceKm;
+  }
   if ((left.transfers || 0) !== (right.transfers || 0)) return (left.transfers || 0) - (right.transfers || 0);
-  if (left.totalSeconds !== right.totalSeconds) return left.totalSeconds - right.totalSeconds;
-  const scoreDifferenceSeconds = leftScore - rightScore;
-  if (Math.abs(scoreDifferenceSeconds) >= DIRECTIONS_PLANNER_DEFAULTS.routeScoreDifferencePrioritySeconds) return scoreDifferenceSeconds;
-  return scoreDifferenceSeconds;
+  if (totalDifferenceSeconds) return totalDifferenceSeconds;
+  return planRankingScoreSeconds(left) - planRankingScoreSeconds(right);
 }
 
 function hasUntimedBusPlan(plan) {
@@ -420,12 +421,9 @@ function hasTransferBacktrack(plan) {
 }
 
 function planRankingScoreSeconds(plan) {
-  return (plan.scoreSeconds ?? plan.totalSeconds) - firstBusPrioritySeconds(plan);
-}
-
-function firstBusPrioritySeconds(plan) {
-  const firstBusLeg = (plan.legs || []).find((leg) => leg.type === "bus");
-  return firstBusLeg?.prioritySeconds || 0;
+  // First-bus priority is already deducted from edge costs inside the search,
+  // so scoreSeconds carries it; deducting it again here would double-count it.
+  return plan.scoreSeconds ?? plan.totalSeconds;
 }
 
 function uniquePlans(plans) {
