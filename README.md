@@ -64,6 +64,18 @@ If the default port is busy:
 npm run dev -- --port 5174
 ```
 
+To keep the local Worker running in the background, use a port of your choice and open that address in the browser:
+
+```bash
+nohup npm run dev -- --port 8787 > /tmp/nus-nextbus.log 2>&1 &
+```
+
+Visit `http://127.0.0.1:8787`. The app must be served by Wrangler rather than opened as a `file://` page, because the Worker provides the NUSBus API proxy. To stop the background server later:
+
+```bash
+pkill -f "wrangler dev --port 8787"
+```
+
 Deploy with:
 
 ```bash

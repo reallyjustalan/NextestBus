@@ -67,6 +67,7 @@
           </div>
           <nav class="header-nav" aria-label="Primary">
             <button id="mainPageHeaderLink" class="header-link" type="button">Stops</button>
+            <button id="busesHeaderLink" class="header-link" type="button">Buses</button>
             <button id="directionsHeaderLink" class="header-link" type="button">Directions</button>
           </nav>
         </div>
@@ -111,6 +112,16 @@
           </div>
         </header>
         <div id="routeBody" class="route-body"></div>
+      </section>
+
+      <section id="busesView" class="buses-view" hidden aria-live="polite">
+        <header class="buses-header">
+          <div>
+            <h2>Buses</h2>
+            <p>Browse NUS shuttle routes. Select a stop to open its live arrivals.</p>
+          </div>
+        </header>
+        <div id="busList" class="bus-list"></div>
       </section>
 
       <section id="directionsView" class="directions-view" hidden aria-live="polite">

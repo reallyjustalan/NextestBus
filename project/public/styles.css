@@ -859,6 +859,184 @@ button:focus {
   padding: 16px;
 }
 
+.buses-view {
+  display: grid;
+  gap: 12px;
+  padding: 14px 0 36px;
+}
+
+.buses-header,
+.bus-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.buses-header {
+  padding: 16px;
+}
+
+.buses-header h2 {
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.bus-list {
+  display: grid;
+  gap: 10px;
+}
+
+.bus-card {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.bus-card:hover {
+  border-color: var(--accent);
+}
+
+.bus-card-header {
+  display: grid;
+  grid-column: 2;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 16px 18px 13px;
+  text-align: left;
+}
+
+.bus-card-header:hover,
+.bus-card-header:focus {
+  background: #f6faf8;
+  color: var(--accent-dark);
+}
+
+.bus-card-badge {
+  grid-row: 1 / span 2;
+  align-self: stretch;
+  min-width: 0;
+  min-height: 100%;
+  border-radius: 0;
+  font-size: 20px;
+}
+
+.bus-card-summary,
+.bus-preview-loading {
+  display: grid;
+  gap: 3px;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.bus-card-summary small {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.bus-card-open {
+  color: var(--muted);
+  font-size: 28px;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.bus-stop-rail,
+.bus-preview-loading {
+  margin: 0;
+  border-top: 1px solid var(--line);
+}
+
+.bus-stop-rail {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 18px 15px;
+}
+
+.bus-preview-loading {
+  grid-column: 2;
+  padding: 14px 18px 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.bus-rail-connector {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--route-color, var(--accent));
+  opacity: 0.35;
+}
+
+.bus-rail-connector.is-omitted {
+  display: grid;
+  place-items: center;
+  position: relative;
+  flex-basis: 30px;
+  width: 30px;
+  height: 16px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1;
+  opacity: 1;
+}
+
+.bus-rail-connector.is-omitted::before,
+.bus-rail-connector.is-omitted::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - 1px);
+  width: 6px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--route-color, var(--accent));
+  opacity: 0.35;
+}
+
+.bus-rail-connector.is-omitted::before {
+  left: 0;
+}
+
+.bus-rail-connector.is-omitted::after {
+  right: 0;
+}
+
+.bus-rail-stop {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fbfcfb;
+  color: var(--ink);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.15;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.bus-rail-stop:hover,
+.bus-rail-stop:focus {
+  border-color: var(--accent);
+  background: #f0f8f6;
+  color: var(--accent-dark);
+}
+
 .directions-view {
   display: grid;
   gap: 12px;
@@ -1767,6 +1945,24 @@ button:focus {
     min-width: 38px;
     min-height: 32px;
     font-size: 14px;
+  }
+
+  .bus-card-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px;
+    padding: 11px 10px 9px;
+  }
+
+  .bus-card {
+    grid-template-columns: 60px minmax(0, 1fr);
+  }
+
+  .bus-card-badge {
+    font-size: 16px;
+  }
+
+  .bus-stop-rail {
+    padding: 9px 10px 11px;
   }
 
   .directions-form {

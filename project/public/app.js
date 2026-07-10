@@ -18,6 +18,9 @@ const state = {
   filteredStops: [],
   filteredLocations: [],
   locations: [],
+  busServices: [],
+  busesLoading: false,
+  busRoutesLoading: false,
   pinnedStopIds: loadPinnedStopIds(),
   openStopId: "",
   arrivalsByStop: new Map(),
@@ -64,6 +67,7 @@ const elements = {
   refreshButton: document.getElementById("refreshButton"),
   pullRefreshIndicator: document.getElementById("pullRefreshIndicator"),
   mainPageHeaderLink: document.getElementById("mainPageHeaderLink"),
+  busesHeaderLink: document.getElementById("busesHeaderLink"),
   directionsHeaderLink: document.getElementById("directionsHeaderLink"),
   installPrompt: document.getElementById("installPrompt"),
   installTitle: document.getElementById("installTitle"),
@@ -78,6 +82,8 @@ const elements = {
   routeTitle: document.getElementById("routeTitle"),
   routeMeta: document.getElementById("routeMeta"),
   routeBody: document.getElementById("routeBody"),
+  busesView: document.getElementById("busesView"),
+  busList: document.getElementById("busList"),
   directionsView: document.getElementById("directionsView"),
   directionsForm: document.getElementById("directionsForm"),
   directionsFromInput: document.getElementById("directionsFromInput"),
@@ -573,6 +579,171 @@ function renderArrival(arrival) {
   `;
 }
 
+async function loadBusServices() {
+  if (state.busServices.length) return state.busServices;
+
+  state.busesLoading = true;
+  renderBusList();
+  try {
+    const data = await apiGet("/services");
+    state.busServices = (data.services || [])
+      .filter(supportsRouteView)
+      .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }));
+    markUpdated();
+    renderBusList();
+    hydrateBusRoutePreviews();
+    return state.busServices;
+  } finally {
+    state.busesLoading = false;
+    renderBusList();
+  }
+}
+
+async function refreshBusServices() {
+  const data = await apiGet("/services");
+  const existingByKey = new Map(state.busServices.map((service) => [service.key, service]));
+  state.busServices = (data.services || [])
+    .filter(supportsRouteView)
+    .map((service) => {
+      const existing = existingByKey.get(service.key);
+      return existing
+        ? { ...service, route: existing.route, stops: existing.stops, routePreviewError: existing.routePreviewError || "" }
+        : service;
+    })
+    .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }));
+  markUpdated();
+  renderBusList();
+  hydrateBusRoutePreviews();
+}
+
+async function hydrateBusRoutePreviews() {
+  if (state.busRoutesLoading) return;
+  state.busRoutesLoading = true;
+
+  try {
+    await Promise.allSettled(
+      state.busServices.map(async (busService) => {
+        try {
+          const routeService = await loadRouteService(busService.key, { silent: true });
+          replaceBusService(busService.key, {
+            ...busService,
+            ...routeService,
+            color: routeService.color || busService.color,
+            route: routeService.route || busService.route,
+            stops: routeService.stops || busService.stops,
+            routePreviewError: ""
+          });
+        } catch (error) {
+          replaceBusService(busService.key, { ...busService, routePreviewError: error.message || "Could not load route preview." });
+        }
+        renderBusList();
+      })
+    );
+  } finally {
+    state.busRoutesLoading = false;
+  }
+}
+
+function replaceBusService(serviceKey, replacement) {
+  state.busServices = state.busServices.map((service) => (service.key === serviceKey ? replacement : service));
+}
+
+function renderBusList() {
+  if (!elements.busList || elements.busesView.hidden) return;
+
+  if (state.busesLoading && !state.busServices.length) {
+    elements.busList.innerHTML = `<div class="empty-state compact">Loading NUS shuttle services...</div>`;
+    return;
+  }
+
+  if (!state.busServices.length) {
+    elements.busList.innerHTML = `<div class="empty-state compact">No NUS shuttle services are available right now.</div>`;
+    return;
+  }
+
+  elements.busList.replaceChildren(...state.busServices.map(renderBusCard));
+}
+
+function renderBusCard(service) {
+  const card = document.createElement("article");
+  card.className = "bus-card";
+  const color = service.color?.background || "#2f6f68";
+  const text = service.color?.text || "#ffffff";
+  const routeStops = busRouteStops(service);
+  const stopCount = service.stopCount || routeStops.length || 0;
+  const schedule = busScheduleSummary(service);
+  card.style.setProperty("--route-color", color);
+
+  card.innerHTML = `
+    <span class="route-badge bus-card-badge" aria-hidden="true" style="background:${escapeHtml(color)};color:${escapeHtml(text)}">${escapeHtml(service.name)}</span>
+    <button class="bus-card-header" type="button" data-service-key="${escapeHtml(service.key || "")}" aria-label="Open ${escapeHtml(service.name)} route">
+      <span class="bus-card-summary">
+        <strong>${escapeHtml(formatCount(stopCount, "stop"))}</strong>
+        ${schedule ? `<small>${escapeHtml(schedule)}</small>` : ""}
+      </span>
+      <span class="bus-card-open" aria-hidden="true">›</span>
+    </button>
+    ${renderBusStopRail(routeStops, service.routePreviewError)}
+  `;
+  return card;
+}
+
+function busRouteStops(service) {
+  return service.route?.stops || service.stops || [];
+}
+
+function busStopName(stop) {
+  return stop?.shortName || stop?.shortLabel || stop?.name || stop?.title || stop?.id || "";
+}
+
+function busScheduleSummary(service) {
+  const schedule = service.route?.schedule;
+  if (!schedule) return "";
+  const serviceHours = schedule.firstTime && schedule.lastTime ? `${schedule.firstTime}–${schedule.lastTime}` : "";
+  return [schedule.label, serviceHours].filter(Boolean).join(" • ");
+}
+
+function busPreviewStops(stops, maxStops = 5) {
+  const distinctStops = stops.flatMap((stop, index) => {
+    const stopKey = String(stop?.id || stop?.code || stop?.name || index);
+    const isFirstOccurrence = stops.slice(0, index).every((candidate, candidateIndex) => {
+      const candidateKey = String(candidate?.id || candidate?.code || candidate?.name || candidateIndex);
+      return candidateKey !== stopKey;
+    });
+    return isFirstOccurrence ? [{ stop, index }] : [];
+  });
+  if (distinctStops.length <= maxStops) return distinctStops;
+
+  const indices = [0, 0.25, 0.5, 0.75, 1]
+    .map((portion) => Math.round((distinctStops.length - 1) * portion))
+    .filter((index, position, all) => all.indexOf(index) === position);
+  return indices.map((index) => distinctStops[index]);
+}
+
+function renderBusStopRail(stops, errorMessage = "") {
+  if (!stops.length) {
+    const message = errorMessage || "Loading route highlights...";
+    return `<p class="bus-preview-loading">${escapeHtml(message)}</p>`;
+  }
+
+  const previewStops = busPreviewStops(stops);
+  return `
+    <div class="bus-stop-rail" aria-label="Selected stops in route order">
+      ${previewStops.map(({ stop, index }, previewIndex) => {
+        const stopId = stop.id || stop.code || "";
+        const nextIndex = previewStops[previewIndex + 1]?.index;
+        const hasOmittedStops = Number.isFinite(nextIndex) && nextIndex - index > 1;
+        return `
+          <button class="bus-rail-stop" type="button" data-stop-id="${escapeHtml(stopId)}" aria-label="Open ${escapeHtml(busStopName(stop))} arrivals">
+            <span>${escapeHtml(busStopName(stop))}</span>
+          </button>
+          ${previewIndex < previewStops.length - 1 ? `<span class="bus-rail-connector${hasOmittedStops ? " is-omitted" : ""}" aria-hidden="true">${hasOmittedStops ? "…" : ""}</span>` : ""}
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
 async function openRouteView(serviceKey, options = {}) {
   const entry = state.routeServicesByKey.get(serviceKey);
   if (!entry) return;
@@ -582,6 +753,7 @@ async function openRouteView(serviceKey, options = {}) {
   elements.appHeader.hidden = false;
   elements.controls.hidden = true;
   elements.stopsSection.hidden = true;
+  elements.busesView.hidden = true;
   elements.directionsView.hidden = true;
   elements.routeView.hidden = false;
   renderRouteView(entry);
@@ -602,13 +774,42 @@ function closeRouteView() {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+async function openBusesView(options = {}) {
+  elements.appHeader.hidden = false;
+  elements.controls.hidden = true;
+  elements.stopsSection.hidden = true;
+  elements.routeView.hidden = true;
+  elements.directionsView.hidden = true;
+  elements.busesView.hidden = false;
+  state.activeRouteKey = "";
+  state.openStopId = "";
+
+  if (options.pushHistory !== false) history.pushState({ view: "buses" }, "", "#buses");
+  renderBusList();
+  try {
+    await loadBusServices();
+  } catch (error) {
+    if (!elements.busesView.hidden) {
+      elements.busList.innerHTML = `<div class="empty-state compact error">Could not load buses: ${escapeHtml(error.message || "Unknown error")}</div>`;
+    }
+  }
+  if (options.scroll !== false) window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function closeBusesView() {
+  elements.busesView.hidden = true;
+  elements.busList.replaceChildren();
+}
+
 async function openDirectionsView(options = {}) {
   elements.appHeader.hidden = false;
   elements.controls.hidden = true;
   elements.stopsSection.hidden = true;
   elements.routeView.hidden = true;
+  elements.busesView.hidden = true;
   elements.directionsView.hidden = false;
   state.activeRouteKey = "";
+  state.openStopId = "";
   if (options.pushHistory !== false) history.pushState({ view: "directions" }, "", "#directions");
   await loadLocations();
   const restored = await restoreDirectionsFromHash();
@@ -628,6 +829,7 @@ function resetBrowsingExperience() {
   state.openStopId = "";
   state.sortOrigin = null;
   elements.searchInput.value = "";
+  closeBusesView();
   closeDirectionsView();
   closeRouteView();
   applyFilters();
@@ -642,6 +844,7 @@ async function openStopFromRoute(stopId) {
   state.sortOrigin = null;
   elements.searchInput.value = "";
   elements.routeView.hidden = true;
+  elements.busesView.hidden = true;
   elements.directionsView.hidden = true;
   elements.directionsSuggestions.hidden = true;
   elements.controls.hidden = false;
@@ -668,10 +871,28 @@ async function openRouteFromDirections(serviceKey) {
   }
 }
 
+async function openRouteFromBuses(serviceKey) {
+  if (!serviceKey) return;
+  try {
+    const cached = state.routeServicesByKey.get(serviceKey);
+    if (!cached?.route?.stops?.length && !cached?.stops?.length) await loadRouteService(serviceKey, { silent: true });
+    openRouteView(serviceKey);
+  } catch (error) {
+    if (!elements.busesView.hidden) {
+      elements.busList.innerHTML = `<div class="empty-state compact error">Could not load this route: ${escapeHtml(error.message || "Unknown error")}</div>`;
+    }
+  }
+}
+
 async function handleHistoryChange(event) {
   const historyState = event.state || { view: "stops" };
   if (historyState.view === "directions" || isDirectionsHash()) {
     await openDirectionsView({ pushHistory: false, scroll: false });
+    return;
+  }
+
+  if (historyState.view === "buses" || isBusesHash()) {
+    await openBusesView({ pushHistory: false, scroll: false });
     return;
   }
 
@@ -680,6 +901,7 @@ async function handleHistoryChange(event) {
     await restoreRouteFromKey(serviceKey, { scroll: false });
   } else {
     closeDirectionsView();
+    closeBusesView();
     closeRouteView();
   }
 }
@@ -690,11 +912,17 @@ async function handleHashChange() {
     return;
   }
 
+  if (isBusesHash()) {
+    await openBusesView({ pushHistory: false, scroll: true });
+    return;
+  }
+
   const serviceKey = routeKeyFromHash();
   if (serviceKey) {
     await restoreRouteFromKey(serviceKey, { scroll: true });
   } else {
     closeDirectionsView();
+    closeBusesView();
     closeRouteView();
     history.replaceState({ view: "stops" }, "", window.location.pathname);
   }
@@ -1631,12 +1859,46 @@ async function refreshStopsList() {
 async function refreshVisibleData(options = {}) {
   if (state.isRefreshing) return;
   const includeStops = options.includeStops === true;
+  const directionsVisible = !elements.directionsView.hidden;
+  const busesVisible = !elements.busesView.hidden;
+  const fromItem = directionsVisible ? resolveDirectionItem("from") : null;
+  const toItem = directionsVisible ? resolveDirectionItem("to") : null;
+  if (directionsVisible && fromItem && toItem) {
+    state.isRefreshing = true;
+    updateStatus();
+    try {
+      await findDirections(null, { pushHistory: false, force: true, background: true });
+    } catch {
+      // Keep the last good route visible when a refresh fails.
+    } finally {
+      state.isRefreshing = false;
+      updateStatus();
+      flushPendingArrivalRefreshAnimation();
+    }
+    return;
+  }
+
   if (!state.activeRouteKey && !state.openStopId) {
-    if (state.directionsResult && !elements.directionsView.hidden) {
+    if (busesVisible && includeStops) {
       state.isRefreshing = true;
       updateStatus();
       try {
-        await findDirections(null, { pushHistory: false, force: true });
+        await refreshBusServices();
+      } catch {
+        // Keep the current bus list visible when a refresh fails.
+      } finally {
+        state.isRefreshing = false;
+        updateStatus();
+        flushPendingArrivalRefreshAnimation();
+      }
+      return;
+    }
+
+    if (state.directionsResult && directionsVisible) {
+      state.isRefreshing = true;
+      updateStatus();
+      try {
+        await findDirections(null, { pushHistory: false, force: true, background: true });
       } catch {
         // Keep the last good route visible when a refresh fails.
       } finally {
@@ -2124,6 +2386,10 @@ async function loadStops() {
       await openDirectionsView({ pushHistory: false, scroll: true });
       return;
     }
+    if (isBusesHash()) {
+      await openBusesView({ pushHistory: false, scroll: true });
+      return;
+    }
     const routeKey = routeKeyFromHash();
     if (routeKey) await restoreRouteFromKey(routeKey, { scroll: true });
   } catch (error) {
@@ -2536,6 +2802,9 @@ elements.locationButton.addEventListener("click", useBrowserLocation);
 elements.homeButton.addEventListener("click", resetBrowsingExperience);
 elements.refreshButton.addEventListener("click", handleManualRefresh);
 elements.mainPageHeaderLink.addEventListener("click", resetBrowsingExperience);
+elements.busesHeaderLink.addEventListener("click", () => {
+  openBusesView({ pushHistory: !isBusesHash() });
+});
 elements.directionsHeaderLink.addEventListener("click", () => {
   openDirectionsView({ pushHistory: !isDirectionsHash() });
 });
@@ -2614,6 +2883,16 @@ elements.stopList.addEventListener("click", (event) => {
 elements.routeBody.addEventListener("click", (event) => {
   const routeStopButton = event.target.closest(".route-stop-content");
   if (routeStopButton?.dataset.stopId) openStopFromRoute(routeStopButton.dataset.stopId);
+});
+elements.busList.addEventListener("click", (event) => {
+  const stopButton = event.target.closest(".bus-rail-stop");
+  if (stopButton?.dataset.stopId) {
+    openStopFromRoute(stopButton.dataset.stopId);
+    return;
+  }
+
+  const routeButton = event.target.closest(".bus-card-header");
+  if (routeButton?.dataset.serviceKey) openRouteFromBuses(routeButton.dataset.serviceKey);
 });
 elements.directionsResult.addEventListener("click", (event) => {
   const routeLink = event.target.closest(".directions-route-link");
