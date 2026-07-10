@@ -933,6 +933,10 @@ function isDirectionsHash() {
   return hash === "directions" || hash.startsWith("directions?");
 }
 
+function isBusesHash() {
+  return window.location.hash.replace(/^#/, "") === "buses";
+}
+
 function directionsHashParams() {
   const hash = window.location.hash.replace(/^#/, "");
   if (!hash.startsWith("directions?")) return new URLSearchParams();
@@ -2918,8 +2922,8 @@ document.addEventListener("visibilitychange", () => {
 });
 
 const initialRouteKey = routeKeyFromHash();
-const initialState = isDirectionsHash() ? { view: "directions" } : initialRouteKey ? { view: "route", serviceKey: initialRouteKey } : { view: "stops" };
-history.replaceState(initialState, "", initialRouteKey || isDirectionsHash() ? window.location.href : window.location.pathname);
+const initialState = isDirectionsHash() ? { view: "directions" } : isBusesHash() ? { view: "buses" } : initialRouteKey ? { view: "route", serviceKey: initialRouteKey } : { view: "stops" };
+history.replaceState(initialState, "", initialRouteKey || isDirectionsHash() || isBusesHash() ? window.location.href : window.location.pathname);
 registerServiceWorker();
 initInstallPrompt();
 startAutoRefresh();
