@@ -2099,3 +2099,22 @@ button:focus {
     font-size: 18px;
   }
 }
+
+@media (max-width: 540px) {
+  .header-top {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .brand {
+    width: 100%;
+  }
+
+  .header-nav {
+    justify-content: flex-start;
+    gap: 16px;
+    padding-top: 0;
+    padding-left: 49px;
+  }
+}
