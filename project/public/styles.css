@@ -805,6 +805,10 @@ button:focus {
   .arrivals-just-refreshed .route-stop-eta.is-text {
     animation: none;
   }
+
+  .directions-loading-spinner {
+    animation-duration: 1.8s;
+  }
 }
 
 .empty-state {
@@ -1137,6 +1141,108 @@ button:focus {
 
 .directions-submit-button {
   display: none;
+}
+
+.directions-loading-card {
+  display: grid;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 18px;
+  box-shadow: 0 8px 24px rgba(21, 50, 46, 0.07);
+}
+
+.directions-loading-card header {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.directions-loading-card header strong {
+  display: block;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.directions-loading-card header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.directions-loading-spinner {
+  width: 22px;
+  height: 22px;
+  border: 3px solid #d8ebe7;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: directionsSpin 800ms linear infinite;
+}
+
+.directions-progress-list {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.directions-progress-list li {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+}
+
+.directions-progress-list li > span {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #cbd8d5;
+  border-radius: 50%;
+}
+
+.directions-progress-list li.is-active {
+  color: var(--accent-dark);
+  font-weight: 800;
+}
+
+.directions-progress-list li.is-active > span {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px #e3f2ef;
+}
+
+.directions-progress-list li.is-complete > span {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.directions-candidate-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.directions-candidate-list span {
+  border-radius: 999px;
+  background: #edf7f4;
+  color: var(--muted);
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.directions-candidate-list strong {
+  color: var(--accent-dark);
+}
+
+@keyframes directionsSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes gpsPulse {

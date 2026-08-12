@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "nus-bus-shell-";
-const CACHE_NAME = "nus-bus-shell-v33";
+const CACHE_NAME = "nus-bus-shell-v34";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -8,6 +8,7 @@ const APP_SHELL = [
   "/directions-planner.js",
   "/data/nus-map-locations.json",
   "/data/nusmods-venues.json",
+  "/data/routing-topology.json",
   "/manifest.webmanifest",
   "/icons/icon.svg",
   "/icons/icon-192.png",
@@ -50,6 +51,21 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     event.respondWith(fetch(request).catch(() => caches.match("/index.html")));
+    return;
+  }
+
+  if (url.pathname === "/data/routing-topology.json") {
+    event.respondWith(
+      caches.match(request).then(async (cached) => {
+        const update = fetch(request).then((response) => {
+          if (response?.status === 200) caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));
+          return response;
+        });
+        if (!cached) return update;
+        event.waitUntil(update.catch(() => null));
+        return cached;
+      })
+    );
     return;
   }
 

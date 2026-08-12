@@ -15,6 +15,9 @@ export const DIRECTIONS_PLANNER_DEFAULTS = {
   walkingPriorityMaxSlowerSeconds: 600,
   maxTransfers: 1,
   transferAlternativeMinimumSavingsSeconds: 300,
+  crossServiceDominanceMinimumSavingsSeconds: 180,
+  crossServiceDominanceMinimumWalkingKm: 0.15,
+  untimedRouteUncertaintySeconds: 300,
   sameLocationThresholdKm: 0.01,
   directWalkAccessToleranceKm: 0.01,
   accessRadiusKm: 0.45,
@@ -23,13 +26,19 @@ export const DIRECTIONS_PLANNER_DEFAULTS = {
   transferWalkRadiusKm: 0.25,
   fallbackSegmentSeconds: 90,
   maxAlternativePlans: 3,
+  arrivalWaitBudgetMs: 1800,
   downstreamBoardingToleranceKm: 0.01,
   firstBusWaitCostMultiplier: 0,
   waitCostMultiplier: 1
 };
 
-const DESTINATION_NODE = "destination";
-const ORIGIN_NODE = "origin";
+const SINGAPORE_SERVICE_CLOCK = new Intl.DateTimeFormat("en-SG", {
+  timeZone: "Asia/Singapore",
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23"
+});
 
 export function estimateWalkingTime(distanceKm, options = {}) {
   const settings = { ...DIRECTIONS_PLANNER_DEFAULTS, ...options };
@@ -39,7 +48,11 @@ export function estimateWalkingTime(distanceKm, options = {}) {
 
 export async function planDirections(input) {
   const settings = { ...DIRECTIONS_PLANNER_DEFAULTS, ...(input.options || {}) };
-  const stops = (input.stops || []).filter((stop) => isNusStop(stop) && coordinatesFor(stop));
+  settings.departureEpochMs = input.departureTime
+    ? new Date(input.departureTime).getTime()
+    : Date.now();
+  const network = input.compiledNetwork || compileRoutingNetwork(input.stops || [], input.services || [], settings);
+  const stops = network.stops;
   const fromCoords = coordinatesFor(input.fromItem);
   const toCoords = coordinatesFor(input.toItem);
 
@@ -56,10 +69,13 @@ export async function planDirections(input) {
   if (!originCandidates.length) throw new Error(`No nearby bus stop location is available for ${input.fromItem.title}.`);
   if (!destinationCandidates.length) throw new Error(`No nearby bus stop location is available for ${input.toItem.title}.`);
 
+  reportProgress(input, "candidates", {
+    originCandidates: originCandidates.map(({ stop, distanceKm }) => ({ stop, distanceKm })),
+    destinationCandidates: destinationCandidates.map(({ stop, distanceKm }) => ({ stop, distanceKm }))
+  });
   const arrivalsByStop = await arrivalsForOriginCandidates(originCandidates, input);
-  const services = normalizeServices(input.services || []);
+  const services = network.services;
 
-  const graph = buildRoutingGraph(stops, services, destinationCandidates, settings);
   const context = {
     fromItem: input.fromItem,
     toItem: input.toItem,
@@ -68,22 +84,32 @@ export async function planDirections(input) {
     originCandidates,
     originCandidateDistanceByStopId: new Map(originCandidates.map((entry) => [entry.stop.id, entry.distanceKm])),
     destinationCandidates,
-    graph,
+    graph: network,
     services,
     arrivalsByStop,
+    departureTime: input.departureTime ? new Date(input.departureTime) : new Date(),
     settings
   };
-  const firstResult = shortestPath(context);
-
-  if (!firstResult) throw new Error("No NUS shuttle route found between these locations.");
-  const rankedPlans = practicalPlans(uniquePlans([firstResult, ...busAlternativePlans(context)]), settings)
+  reportProgress(input, "routing", { serviceCount: services.length });
+  const directWalk = directWalkingPlan(context);
+  const transit = multiCriteriaTransitPlans(context);
+  const rankedPlans = nonDominatedPlans(
+    practicalPlans(uniquePlans([directWalk, ...transit]), settings),
+    settings
+  )
     .sort((left, right) => comparePlans(left, right, settings));
+  if (!rankedPlans.length) throw new Error("No NUS shuttle route found between these locations.");
   const result = rankedPlans[0];
   const alternatives = rankedPlans
     .filter((plan) => !samePlan(result, plan))
     .slice(0, settings.maxAlternativePlans);
   if (alternatives.length) result.alternatives = alternatives;
+  reportProgress(input, "complete", { planCount: rankedPlans.length });
   return result;
+}
+
+function reportProgress(input, phase, detail = {}) {
+  if (typeof input.onProgress === "function") input.onProgress({ phase, ...detail });
 }
 
 export function candidateStopsForPoint(point, stops, options = {}) {
@@ -107,16 +133,18 @@ export function candidateStopsForPoint(point, stops, options = {}) {
   return uniqueStopEntries([...withinRadius, ...minimum]).slice(0, settings.candidateStopLimit);
 }
 
-function buildRoutingGraph(stops, services, destinationCandidates, settings) {
+export function compileRoutingNetwork(stopsInput, servicesInput, options = {}) {
+  const settings = { ...DIRECTIONS_PLANNER_DEFAULTS, ...options };
+  const stops = (stopsInput || [])
+    .filter((stop) => isNusStop(stop) && coordinatesFor(stop))
+    .map((stop) => ({ ...stop, coordinates: coordinatesFor(stop) }));
   const stopsById = new Map(stops.map((stop) => [stop.id, stop]));
-  const destinationByStopId = new Map(destinationCandidates.map((entry) => [entry.stop.id, entry]));
-  const transferWalksByStop = stopTransferWalks(stops, settings);
+  const services = normalizeServices(servicesInput || [], settings);
   const serviceOccurrencesByStop = new Map();
 
   for (const service of services) {
     for (let index = 0; index < service.stops.length; index += 1) {
-      const stop = service.stops[index];
-      const stopId = stop.id;
+      const stopId = service.stops[index]?.id;
       if (!stopId || !stopsById.has(stopId)) continue;
       if (!serviceOccurrencesByStop.has(stopId)) serviceOccurrencesByStop.set(stopId, []);
       serviceOccurrencesByStop.get(stopId).push({ service, index });
@@ -124,159 +152,261 @@ function buildRoutingGraph(stops, services, destinationCandidates, settings) {
   }
 
   return {
+    stops,
     stopsById,
-    destinationByStopId,
-    transferWalksByStop,
-    serviceOccurrencesByStop
+    services,
+    serviceOccurrencesByStop,
+    transferWalksByStop: stopTransferWalks(stops, settings),
+    compiledAt: Date.now()
   };
 }
 
-function shortestPath(context, options = {}) {
-  const queue = new MinQueue();
-  const best = new Map();
-  const previous = new Map();
-  const searchContext = {
-    ...context,
-    requireBus: options.requireBus === true,
-    requiredFirstServiceKey: options.requiredFirstServiceKey || ""
+function directWalkingPlan(context) {
+  const distanceKm = haversine(context.fromCoords, context.toCoords);
+  const durationSeconds = estimateWalkingTime(distanceKm, context.settings);
+  return {
+    estimated: true,
+    fromItem: context.fromItem,
+    toItem: context.toItem,
+    fromStop: null,
+    toStop: null,
+    totalSeconds: durationSeconds,
+    scoreSeconds: durationSeconds,
+    walkingDistanceKm: distanceKm,
+    transfers: 0,
+    hasBusTiming: true,
+    legs: [walkLeg(context.fromItem, context.toItem, distanceKm, context.settings)]
   };
+}
 
-  best.set(ORIGIN_NODE, { costSeconds: 0, elapsedSeconds: 0 });
-  queue.push(ORIGIN_NODE, 0);
+function multiCriteriaTransitPlans(context) {
+  let labelsByStop = new Map();
+  const destinationByStopId = new Map(context.destinationCandidates.map((entry) => [entry.stop.id, entry]));
+  const destinationLabels = [];
 
-  while (queue.size) {
-    const { key, priority } = queue.pop();
-    const current = best.get(key);
-    if (!current || priority !== current.costSeconds) continue;
-
-    if (key === DESTINATION_NODE) {
-      return resultFromPath(previous, searchContext, current.elapsedSeconds, current.costSeconds);
-    }
-
-    for (const edge of edgesForState(key, current.elapsedSeconds, searchContext)) {
-      const nextElapsedSeconds = current.elapsedSeconds + edge.durationSeconds;
-      const nextCostSeconds = current.costSeconds + edge.costSeconds;
-      const previousBest = best.get(edge.toKey);
-      if (previousBest && nextCostSeconds >= previousBest.costSeconds) continue;
-      best.set(edge.toKey, { costSeconds: nextCostSeconds, elapsedSeconds: nextElapsedSeconds });
-      previous.set(edge.toKey, { fromKey: key, edge });
-      queue.push(edge.toKey, nextCostSeconds);
-    }
+  for (const entry of context.originCandidates) {
+    const durationSeconds = estimateWalkingTime(entry.distanceKm, context.settings);
+    addParetoLabel(labelsByStop, entry.stop.id, {
+      stop: entry.stop,
+      elapsedSeconds: durationSeconds,
+      costSeconds: durationSeconds,
+      walkingDistanceKm: entry.distanceKm,
+      rides: 0,
+      lastServiceKey: "",
+      firstServiceKey: "",
+      hasBusTiming: false,
+      legs: [walkLeg(context.fromItem, entry.stop, entry.distanceKm, context.settings)],
+      visitedBusStopIds: new Set()
+    });
   }
 
-  return null;
-}
+  for (let rideRound = 1; rideRound <= context.settings.maxTransfers + 1; rideRound += 1) {
+    const rideLabels = new Map();
 
-function edgesForState(key, elapsedSeconds, context) {
-  if (key === ORIGIN_NODE) return originEdges(context);
-  if (key === DESTINATION_NODE) return [];
+    for (const service of context.services) {
+      if (!serviceOperatesAt(service, context.departureTime || new Date())) continue;
 
-  const state = parseStateKey(key);
-  const stop = context.graph.stopsById.get(state.stopId);
-  if (!stop) return [];
+      for (let boardIndex = 0; boardIndex < service.stops.length - 1; boardIndex += 1) {
+        const boardStop = service.stops[boardIndex];
+        const boardingLabels = labelsByStop.get(boardStop.id) || [];
+        if (!boardingLabels.length) continue;
 
-  return [
-    ...destinationEdges(stop, state, context),
-    ...transferWalkEdges(stop, state, context),
-    ...busEdges(stop, state, elapsedSeconds, context)
-  ];
-}
+        for (const label of boardingLabels) {
+          const isSameServiceContinuation = label.lastServiceKey === service.key;
+          const wait = isSameServiceContinuation
+            ? noWaitForServiceContinuation()
+            : waitForServiceAtStop(
+                boardStop.id,
+                service.key,
+                label.elapsedSeconds,
+                context.arrivalsByStop,
+                context.settings
+              );
+          const transferPenaltySeconds = label.rides && !isSameServiceContinuation
+            ? context.settings.transferPenaltySeconds
+            : 0;
+          const waitCostSeconds = wait.waitSeconds * (
+            label.rides ? context.settings.waitCostMultiplier : context.settings.firstBusWaitCostMultiplier
+          );
+          const prioritySeconds = firstBusDeparturePrioritySeconds(
+            wait,
+            { hasBus: label.rides > 0 },
+            context.settings
+          );
 
-function originEdges(context) {
-  const directDistanceKm = haversine(context.fromCoords, context.toCoords);
-  return [
-    context.requireBus ? null : {
-      toKey: DESTINATION_NODE,
-      durationSeconds: estimateWalkingTime(directDistanceKm, context.settings),
-      costSeconds: estimateWalkingTime(directDistanceKm, context.settings),
-      leg: walkLeg(context.fromItem, context.toItem, directDistanceKm, context.settings)
-    },
-    ...context.originCandidates.map((entry) => ({
-      toKey: stateKey(entry.stop.id, "", false, ""),
-      durationSeconds: estimateWalkingTime(entry.distanceKm, context.settings),
-      costSeconds: estimateWalkingTime(entry.distanceKm, context.settings),
-      leg: walkLeg(context.fromItem, entry.stop, entry.distanceKm, context.settings)
-    }))
-  ].filter(Boolean);
-}
+          for (let alightIndex = boardIndex + 1; alightIndex < service.stops.length; alightIndex += 1) {
+            const alightStop = service.stops[alightIndex];
+            if (!context.graph.stopsById.has(alightStop.id)) continue;
+            if (!label.rides && hasCloserDownstreamBoardingCandidate(
+              service,
+              boardIndex,
+              alightIndex,
+              boardStop.id,
+              context
+            )) continue;
 
-function destinationEdges(stop, state, context) {
-  if (context.requireBus && !state.hasBus) return [];
-  const destinationEntry = context.graph.destinationByStopId.get(stop.id);
-  if (!destinationEntry) return [];
-
-  return [{
-    toKey: DESTINATION_NODE,
-    durationSeconds: estimateWalkingTime(destinationEntry.distanceKm, context.settings),
-    costSeconds: estimateWalkingTime(destinationEntry.distanceKm, context.settings),
-    leg: walkLeg(stop, context.toItem, destinationEntry.distanceKm, context.settings)
-  }];
-}
-
-function transferWalkEdges(stop, state, context) {
-  return (context.graph.transferWalksByStop.get(stop.id) || []).map((entry) => ({
-    toKey: stateKey(entry.stop.id, state.lastServiceKey, state.hasBus, ""),
-    durationSeconds: estimateWalkingTime(entry.distanceKm, context.settings),
-    costSeconds: estimateWalkingTime(entry.distanceKm, context.settings),
-    leg: walkLeg(stop, entry.stop, entry.distanceKm, context.settings)
-  }));
-}
-
-function busEdges(stop, state, elapsedSeconds, context) {
-  const occurrences = context.graph.serviceOccurrencesByStop.get(stop.id) || [];
-  const edges = [];
-
-  for (const occurrence of occurrences) {
-    const { service, index } = occurrence;
-    if (!state.hasBus && context.requiredFirstServiceKey && service.key !== context.requiredFirstServiceKey) continue;
-    const isSameTripContinuation = state.continuationServiceKey === service.key;
-    const wait = isSameTripContinuation
-      ? noWaitForServiceContinuation()
-      : waitForServiceAtStop(stop.id, service.key, elapsedSeconds, context.arrivalsByStop, context.settings);
-    const transferPenaltySeconds = state.lastServiceKey && state.lastServiceKey !== service.key ? context.settings.transferPenaltySeconds : 0;
-
-    for (let nextIndex = index + 1; nextIndex < service.stops.length; nextIndex += 1) {
-      const toStop = service.stops[nextIndex];
-      if (!toStop?.id || !context.graph.stopsById.has(toStop.id)) continue;
-      if (!state.hasBus && hasCloserDownstreamBoardingCandidate(service, index, nextIndex, stop.id, context)) continue;
-      const rideSeconds = rideSecondsBetween(service, index, nextIndex, context.settings);
-      if (!Number.isFinite(rideSeconds) || rideSeconds <= 0) continue;
-      const stops = service.stops.slice(index, nextIndex + 1);
-      // The transfer penalty is a route-shape preference, not travel time, so it
-      // only affects costSeconds. Keeping it out of durationSeconds keeps the
-      // displayed total equal to the sum of the displayed wait/ride/walk parts.
-      const durationSeconds = wait.waitSeconds + rideSeconds;
-      const waitCostSeconds = wait.waitSeconds * (state.hasBus ? context.settings.waitCostMultiplier : context.settings.firstBusWaitCostMultiplier);
-      const prioritySeconds = firstBusDeparturePrioritySeconds(wait, state, context.settings);
-      const costSeconds = Math.max(0, waitCostSeconds + transferPenaltySeconds + rideSeconds - prioritySeconds);
-      edges.push({
-        toKey: stateKey(toStop.id, service.key, true, service.key),
-        durationSeconds,
-        costSeconds,
-        leg: {
-          type: "bus",
-          serviceKey: service.key,
-          routeCode: service.routeCode,
-          fromStop: stop,
-          toStop,
-          stops,
-          durationSeconds,
-          costSeconds,
-          waitSeconds: wait.waitSeconds,
-          rideSeconds,
-          transferPenaltySeconds,
-          prioritySeconds,
-          boardingArrivals: wait.boardingArrivals,
-          selectedArrival: wait.selectedArrival,
-          catchStatus: wait.catchStatus,
-          catchGapSeconds: wait.catchGapSeconds,
-          missedArrivals: wait.missedArrivals
+            const rideSeconds = rideSecondsBetween(service, boardIndex, alightIndex, context.settings);
+            if (!Number.isFinite(rideSeconds) || rideSeconds <= 0) continue;
+            const durationSeconds = wait.waitSeconds + rideSeconds;
+            const costSeconds = Math.max(
+              0,
+              waitCostSeconds + transferPenaltySeconds + rideSeconds - prioritySeconds
+            );
+            const leg = {
+              type: "bus",
+              serviceKey: service.key,
+              routeCode: service.routeCode,
+              fromStop: boardStop,
+              toStop: alightStop,
+              stops: service.stops.slice(boardIndex, alightIndex + 1),
+              durationSeconds,
+              costSeconds,
+              waitSeconds: wait.waitSeconds,
+              rideSeconds,
+              transferPenaltySeconds,
+              prioritySeconds,
+              boardingArrivals: wait.boardingArrivals,
+              selectedArrival: wait.selectedArrival,
+              catchStatus: wait.catchStatus,
+              catchGapSeconds: wait.catchGapSeconds,
+              missedArrivals: wait.missedArrivals
+            };
+            const visitedBusStopIds = new Set(label.visitedBusStopIds);
+            for (const stop of leg.stops) visitedBusStopIds.add(stop.id);
+            addParetoLabel(rideLabels, alightStop.id, {
+              stop: alightStop,
+              elapsedSeconds: label.elapsedSeconds + durationSeconds,
+              costSeconds: label.costSeconds + costSeconds,
+              walkingDistanceKm: label.walkingDistanceKm,
+              rides: label.rides + (isSameServiceContinuation ? 0 : 1),
+              lastServiceKey: service.key,
+              firstServiceKey: label.firstServiceKey || service.key,
+              hasBusTiming: label.hasBusTiming || hasLiveBusTiming(leg),
+              legs: [...label.legs, leg],
+              visitedBusStopIds
+            });
+          }
         }
-      });
+      }
+    }
+
+    if (!rideLabels.size) break;
+    labelsByStop = expandTransferWalkLabels(rideLabels, context);
+
+    for (const [stopId, labels] of labelsByStop) {
+      const destination = destinationByStopId.get(stopId);
+      if (!destination) continue;
+      for (const label of labels) destinationLabels.push(planFromTransitLabel(label, destination, context));
     }
   }
 
-  return edges;
+  return destinationLabels;
+}
+
+function expandTransferWalkLabels(labelsByStop, context) {
+  const expanded = new Map();
+  for (const [stopId, labels] of labelsByStop) {
+    for (const label of labels) {
+      addParetoLabel(expanded, stopId, label);
+      for (const entry of context.graph.transferWalksByStop.get(stopId) || []) {
+        if (label.visitedBusStopIds.has(entry.stop.id)) continue;
+        const durationSeconds = estimateWalkingTime(entry.distanceKm, context.settings);
+        addParetoLabel(expanded, entry.stop.id, {
+          ...label,
+          stop: entry.stop,
+          elapsedSeconds: label.elapsedSeconds + durationSeconds,
+          costSeconds: label.costSeconds + durationSeconds,
+          walkingDistanceKm: label.walkingDistanceKm + entry.distanceKm,
+          legs: [...label.legs, walkLeg(label.stop, entry.stop, entry.distanceKm, context.settings)]
+        });
+      }
+    }
+  }
+  return expanded;
+}
+
+function addParetoLabel(labelsByStop, stopId, candidate) {
+  const labels = labelsByStop.get(stopId) || [];
+  const comparable = (label) => (
+    label.lastServiceKey === candidate.lastServiceKey && label.firstServiceKey === candidate.firstServiceKey
+  );
+  const dominates = (left, right) => (
+    left.elapsedSeconds <= right.elapsedSeconds
+    && left.costSeconds <= right.costSeconds
+    && left.walkingDistanceKm <= right.walkingDistanceKm
+    && (
+      left.elapsedSeconds < right.elapsedSeconds
+      || left.costSeconds < right.costSeconds
+      || left.walkingDistanceKm < right.walkingDistanceKm
+    )
+  );
+  if (labels.some((label) => comparable(label) && dominates(label, candidate))) return;
+
+  const survivors = labels.filter((label) => !(comparable(label) && dominates(candidate, label)));
+  survivors.push(candidate);
+  survivors.sort((left, right) => {
+    if (left.costSeconds !== right.costSeconds) return left.costSeconds - right.costSeconds;
+    if (left.elapsedSeconds !== right.elapsedSeconds) return left.elapsedSeconds - right.elapsedSeconds;
+    return left.walkingDistanceKm - right.walkingDistanceKm;
+  });
+  labelsByStop.set(stopId, survivors.slice(0, 16));
+}
+
+function planFromTransitLabel(label, destination, context) {
+  const egressSeconds = estimateWalkingTime(destination.distanceKm, context.settings);
+  const legs = compressRouteLegs([
+    ...label.legs,
+    walkLeg(label.stop, context.toItem, destination.distanceKm, context.settings)
+  ]);
+  const busLegs = legs.filter((leg) => leg.type === "bus");
+  return {
+    estimated: true,
+    fromItem: context.fromItem,
+    toItem: context.toItem,
+    fromStop: busLegs[0]?.fromStop || null,
+    toStop: busLegs[busLegs.length - 1]?.toStop || null,
+    totalSeconds: label.elapsedSeconds + egressSeconds,
+    scoreSeconds: label.costSeconds + egressSeconds,
+    walkingDistanceKm: label.walkingDistanceKm + destination.distanceKm,
+    transfers: Math.max(0, busLegs.length - 1),
+    hasBusTiming: label.hasBusTiming,
+    legs
+  };
+}
+
+function serviceOperatesAt(service, date) {
+  const schedule = service.schedule;
+  if (!schedule) return true;
+  const label = String(schedule.label || "").toLowerCase();
+  const clock = singaporeServiceClock(date);
+  const day = clock.day;
+  if (/mon\s*[-–]\s*fri/.test(label) && (day === 0 || day === 6)) return false;
+  if (/mon\s*[-–]\s*sat/.test(label) && day === 0) return false;
+  if (/weekend/.test(label) && day !== 0 && day !== 6) return false;
+
+  const firstMinutes = clockMinutes(schedule.firstTime);
+  const lastMinutes = clockMinutes(schedule.lastTime);
+  if (!Number.isFinite(firstMinutes) || !Number.isFinite(lastMinutes)) return true;
+  const nowMinutes = clock.hour * 60 + clock.minute;
+  if (lastMinutes >= firstMinutes) return nowMinutes >= firstMinutes && nowMinutes <= lastMinutes;
+  return nowMinutes >= firstMinutes || nowMinutes <= lastMinutes;
+}
+
+function singaporeServiceClock(date) {
+  const values = Object.fromEntries(
+    SINGAPORE_SERVICE_CLOCK.formatToParts(date).map((part) => [part.type, part.value])
+  );
+  return {
+    day: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(values.weekday),
+    hour: Number(values.hour),
+    minute: Number(values.minute)
+  };
+}
+
+function clockMinutes(value) {
+  const match = String(value || "").match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return Number.NaN;
+  return Number(match[1]) * 60 + Number(match[2]);
 }
 
 function hasCloserDownstreamBoardingCandidate(service, startIndex, endIndex, currentStopId, context) {
@@ -300,56 +430,13 @@ function firstBusDeparturePrioritySeconds(wait, state, settings) {
   return settings.soonFirstBusPrioritySeconds * (1 - wait.waitSeconds / settings.soonFirstBusWindowSeconds);
 }
 
-function resultFromPath(previous, context, totalSeconds, scoreSeconds) {
-  const legs = [];
-  let key = DESTINATION_NODE;
-
-  while (key !== ORIGIN_NODE) {
-    const step = previous.get(key);
-    if (!step) break;
-    legs.push(step.edge.leg);
-    key = step.fromKey;
-  }
-
-  legs.reverse();
-  const compressedLegs = compressRouteLegs(legs);
-  const busLegs = compressedLegs.filter((leg) => leg.type === "bus");
-  const walkingDistanceKm = compressedLegs
-    .filter((leg) => leg.type === "walk")
-    .reduce((total, leg) => total + leg.distanceKm, 0);
-
-  return {
-    estimated: true,
-    fromItem: context.fromItem,
-    toItem: context.toItem,
-    fromStop: busLegs[0]?.fromStop || null,
-    toStop: busLegs[busLegs.length - 1]?.toStop || null,
-    totalSeconds,
-    scoreSeconds,
-    walkingDistanceKm,
-    transfers: Math.max(0, busLegs.length - 1),
-    hasBusTiming: busLegs.length ? busLegs.some(hasLiveBusTiming) : true,
-    legs: compressedLegs
-  };
-}
-
-function busAlternativePlans(context) {
-  const plans = [];
-  const serviceKeys = [...new Set(context.services.map((service) => service.key).filter(Boolean))];
-  const unconstrainedBus = shortestPath(context, { requireBus: true });
-  if (unconstrainedBus) plans.push(unconstrainedBus);
-
-  for (const serviceKey of serviceKeys) {
-    const plan = shortestPath(context, { requireBus: true, requiredFirstServiceKey: serviceKey });
-    if (plan) plans.push(plan);
-  }
-
-  return plans;
-}
-
 export function comparePlans(left, right, options = {}) {
   const settings = { ...DIRECTIONS_PLANNER_DEFAULTS, ...options };
-  if (hasUntimedBusPlan(left) !== hasUntimedBusPlan(right)) return hasUntimedBusPlan(left) ? 1 : -1;
+  const leftHasBus = left.legs?.some((leg) => leg.type === "bus");
+  const rightHasBus = right.legs?.some((leg) => leg.type === "bus");
+  if (leftHasBus && rightHasBus && hasUntimedBusPlan(left) !== hasUntimedBusPlan(right)) {
+    return hasUntimedBusPlan(left) ? 1 : -1;
+  }
   const walkDifferenceKm = (left.walkingDistanceKm || 0) - (right.walkingDistanceKm || 0);
   const totalDifferenceSeconds = (left.totalSeconds || 0) - (right.totalSeconds || 0);
   if (Math.abs(walkDifferenceKm) >= settings.walkingDifferencePriorityKm) {
@@ -380,6 +467,53 @@ function practicalPlans(plans, settings) {
     if ((plan.transfers || 0) === 0) return true;
     return plan.totalSeconds + settings.transferAlternativeMinimumSavingsSeconds < bestNoTransferSeconds;
   });
+}
+
+function nonDominatedPlans(plans, settings) {
+  return plans.filter((candidate, candidateIndex) => !plans.some((other, otherIndex) => {
+    if (candidateIndex === otherIndex) return false;
+    return planDominates(other, candidate, settings);
+  }));
+}
+
+function planDominates(left, right, settings) {
+  const sameServicePattern = planServicePattern(left) === planServicePattern(right);
+  const timeToleranceSeconds = 5;
+  const walkingToleranceKm = 0.01;
+  const leftSeconds = Number(left.totalSeconds) || 0;
+  const rightSeconds = Number(right.totalSeconds) || 0;
+  const leftWalking = Number(left.walkingDistanceKm) || 0;
+  const rightWalking = Number(right.walkingDistanceKm) || 0;
+  const leftTransfers = Number(left.transfers) || 0;
+  const rightTransfers = Number(right.transfers) || 0;
+  const timingUncertainty = !left.hasBusTiming && right.hasBusTiming
+    ? settings.untimedRouteUncertaintySeconds
+    : 0;
+  const comparableLeftSeconds = leftSeconds + timingUncertainty;
+  const noWorse = comparableLeftSeconds <= rightSeconds + timeToleranceSeconds
+    && leftWalking <= rightWalking + walkingToleranceKm
+    && leftTransfers <= rightTransfers;
+  if (!noWorse) return false;
+
+  const timeSavings = rightSeconds - comparableLeftSeconds;
+  const walkingSavings = rightWalking - leftWalking;
+  if (!sameServicePattern) {
+    return timeSavings >= settings.crossServiceDominanceMinimumSavingsSeconds
+      && walkingSavings >= settings.crossServiceDominanceMinimumWalkingKm;
+  }
+
+  if (Boolean(left.hasBusTiming) < Boolean(right.hasBusTiming)) return false;
+  return timeSavings > timeToleranceSeconds
+    || walkingSavings > walkingToleranceKm
+    || leftTransfers < rightTransfers
+    || Boolean(left.hasBusTiming) > Boolean(right.hasBusTiming);
+}
+
+function planServicePattern(plan) {
+  const services = (plan.legs || [])
+    .filter((leg) => leg.type === "bus")
+    .map((leg) => leg.serviceKey || leg.routeCode || "bus");
+  return services.length ? services.join(">") : "walk";
 }
 
 function walkOnlyPracticalPlans(plans, settings) {
@@ -511,13 +645,41 @@ async function arrivalsForOriginCandidates(originCandidates, input) {
     arrivalsByStop.set(stopId, normalizeArrivalServices(value));
   }
 
-  if (typeof input.getArrivalsForStop !== "function") return arrivalsByStop;
+  const missingCandidates = originCandidates.filter(({ stop }) => stop?.id && !arrivalsByStop.has(stop.id));
+  reportProgress(input, "arrivals", {
+    completed: originCandidates.length - missingCandidates.length,
+    total: originCandidates.length
+  });
+  if (typeof input.getArrivalsForStop !== "function" || !missingCandidates.length) return arrivalsByStop;
 
-  await Promise.allSettled(originCandidates.map(async ({ stop }) => {
-    if (!stop?.id || arrivalsByStop.has(stop.id)) return;
-    const data = await input.getArrivalsForStop(stop.id);
-    arrivalsByStop.set(stop.id, normalizeArrivalServices(data));
+  let completed = originCandidates.length - missingCandidates.length;
+  let receivedAfterBudget = false;
+  let budgetExpired = false;
+  const pendingArrivals = Promise.allSettled(missingCandidates.map(async ({ stop }) => {
+    try {
+      const data = await input.getArrivalsForStop(stop.id);
+      arrivalsByStop.set(stop.id, normalizeArrivalServices(data));
+      if (budgetExpired) receivedAfterBudget = true;
+    } finally {
+      completed += 1;
+      reportProgress(input, "arrivals", { completed, total: originCandidates.length, stop });
+    }
   }));
+  let allArrivalsReady = false;
+  await Promise.race([
+    pendingArrivals.then(() => {
+      allArrivalsReady = true;
+    }),
+    new Promise((resolvePromise) => setTimeout(() => {
+      budgetExpired = true;
+      resolvePromise();
+    }, input.options?.arrivalWaitBudgetMs ?? DIRECTIONS_PLANNER_DEFAULTS.arrivalWaitBudgetMs))
+  ]);
+  if (!allArrivalsReady) {
+    pendingArrivals.then(() => {
+      if (receivedAfterBudget && typeof input.onLateArrivals === "function") input.onLateArrivals();
+    });
+  }
 
   return arrivalsByStop;
 }
@@ -533,7 +695,21 @@ function waitForServiceAtStop(stopId, serviceKey, elapsedSeconds, arrivalsByStop
     const minutes = Number(arrival.minutes);
     if (!Number.isFinite(minutes)) continue;
 
-    const arrivalSeconds = minutes * 60;
+    const estimatedArrivalMs = Date.parse(arrival.estimatedArrival || "");
+    const snapshotUpdatedAtMs = Date.parse(arrival._snapshotUpdatedAt || "");
+    const snapshotAgeSeconds = Number.isFinite(snapshotUpdatedAtMs)
+      ? Math.max(0, settings.departureEpochMs - snapshotUpdatedAtMs) / 1000
+      : 0;
+    const estimatedSecondsAtSnapshot = Number.isFinite(estimatedArrivalMs) && Number.isFinite(snapshotUpdatedAtMs)
+      ? (estimatedArrivalMs - snapshotUpdatedAtMs) / 1000
+      : Number.NaN;
+    const absoluteEstimateIsConsistent = Number.isFinite(estimatedArrivalMs) && (
+      !Number.isFinite(estimatedSecondsAtSnapshot)
+      || Math.abs(estimatedSecondsAtSnapshot - minutes * 60) <= 120
+    );
+    const arrivalSeconds = absoluteEstimateIsConsistent
+      ? (estimatedArrivalMs - settings.departureEpochMs) / 1000
+      : minutes * 60 - snapshotAgeSeconds;
     const earlyBySeconds = readySeconds - arrivalSeconds;
     if (earlyBySeconds <= 0) {
       return {
@@ -571,23 +747,63 @@ function waitForServiceAtStop(stopId, serviceKey, elapsedSeconds, arrivalsByStop
   };
 }
 
-function normalizeServices(services) {
+function normalizeServices(services, settings = DIRECTIONS_PLANNER_DEFAULTS) {
   return services
     .filter((service) => service && isNusService(service))
     .map((service) => {
       const stops = (service.route?.stops || service.stops || [])
         .map((routeStop) => normalizeRouteStop(routeStop))
         .filter((stop) => stop.id && coordinatesFor(stop));
-      return {
+      const normalized = {
         key: service.key || service.id || `nus:${service.name || service.route?.code || ""}`,
         routeCode: service.name || service.route?.code || String(service.key || "").replace(/^nus:/, ""),
         color: service.color,
         stops,
-        path: (service.route?.path || []).filter(coordinatesFor),
+        path: (service.route?.path || [])
+          .map((point) => ({ ...point, coordinates: coordinatesFor(point) }))
+          .filter((point) => point.coordinates),
+        schedule: service.route?.schedule || service.schedule || null,
         raw: service
       };
+      normalized.segmentSeconds = precomputeSegmentSeconds(normalized, settings);
+      normalized.cumulativeRideSeconds = [0];
+      for (const seconds of normalized.segmentSeconds) {
+        normalized.cumulativeRideSeconds.push(
+          normalized.cumulativeRideSeconds[normalized.cumulativeRideSeconds.length - 1] + seconds
+        );
+      }
+      return normalized;
     })
     .filter((service) => service.key && service.stops.length > 1);
+}
+
+function precomputeSegmentSeconds(service, settings) {
+  const pathStopIndices = [];
+  let pathCursor = 0;
+  for (const stop of service.stops) {
+    const index = pathStopIndex(service.path, stop, pathCursor);
+    pathStopIndices.push(index);
+    if (index >= pathCursor) pathCursor = index + 1;
+  }
+
+  return service.stops.slice(0, -1).map((fromStop, index) => {
+    const fromPathIndex = pathStopIndices[index];
+    const toPathIndex = pathStopIndices[index + 1];
+    let distanceKm = Number.NaN;
+    if (fromPathIndex >= 0 && toPathIndex > fromPathIndex) {
+      distanceKm = 0;
+      for (let pathIndex = fromPathIndex + 1; pathIndex <= toPathIndex; pathIndex += 1) {
+        distanceKm += haversine(
+          service.path[pathIndex - 1].coordinates,
+          service.path[pathIndex].coordinates
+        );
+      }
+    }
+    if (!Number.isFinite(distanceKm) || distanceKm <= 0) {
+      distanceKm = haversine(fromStop.coordinates, service.stops[index + 1].coordinates) * settings.roadDistanceFactor;
+    }
+    return distanceKm / settings.busSpeedKmh * 3600 + settings.dwellSeconds;
+  });
 }
 
 function normalizeRouteStop(stop) {
@@ -604,6 +820,9 @@ function normalizeRouteStop(stop) {
 }
 
 function rideSecondsBetween(service, startIndex, endIndex, settings) {
+  if (service.cumulativeRideSeconds?.length > endIndex) {
+    return service.cumulativeRideSeconds[endIndex] - service.cumulativeRideSeconds[startIndex];
+  }
   let totalSeconds = 0;
   for (let index = startIndex; index < endIndex; index += 1) {
     totalSeconds += segmentRideSeconds(service, index, settings);
@@ -710,10 +929,22 @@ function compactPlace(place) {
 
 function normalizeArrivalServices(value) {
   if (!value) return [];
-  if (Array.isArray(value)) return value;
-  if (Array.isArray(value.services)) return value.services;
-  if (Array.isArray(value.data?.services)) return value.data.services;
-  return [];
+  const services = Array.isArray(value)
+    ? value
+    : Array.isArray(value.services)
+      ? value.services
+      : Array.isArray(value.data?.services)
+        ? value.data.services
+        : [];
+  const snapshotUpdatedAt = value.updatedAt || value.data?.updatedAt || "";
+  if (!snapshotUpdatedAt) return services;
+  return services.map((service) => ({
+    ...service,
+    arrivals: (service.arrivals || []).map((arrival) => ({
+      ...arrival,
+      _snapshotUpdatedAt: snapshotUpdatedAt
+    }))
+  }));
 }
 
 function mapEntries(value) {
@@ -783,71 +1014,10 @@ function toRadians(degrees) {
   return (degrees * Math.PI) / 180;
 }
 
-function stateKey(stopId, lastServiceKey, hasBus = false, continuationServiceKey = "") {
-  return `stop:${stopId}|service:${lastServiceKey || ""}|bus:${hasBus ? "1" : "0"}|continue:${continuationServiceKey || ""}`;
-}
-
-function parseStateKey(key) {
-  const [stopPart, rest = ""] = key.split("|service:");
-  const [servicePart = "", statePart = "bus:0"] = rest.split("|bus:");
-  const [busPart = "0", continuationServiceKey = ""] = statePart.split("|continue:");
-  return {
-    stopId: stopPart.replace(/^stop:/, ""),
-    lastServiceKey: servicePart || "",
-    hasBus: busPart === "1",
-    continuationServiceKey: continuationServiceKey || ""
-  };
-}
-
 function stopLabel(stop) {
   return stop?.title || stop?.name || stop?.shortLabel || stop?.shortName || stop?.id || "Location";
 }
 
 function normalizeKey(value) {
   return String(value || "").trim().toLowerCase();
-}
-
-class MinQueue {
-  items = [];
-
-  get size() {
-    return this.items.length;
-  }
-
-  push(key, priority) {
-    this.items.push({ key, priority });
-    this.bubbleUp(this.items.length - 1);
-  }
-
-  pop() {
-    const first = this.items[0];
-    const last = this.items.pop();
-    if (this.items.length && last) {
-      this.items[0] = last;
-      this.sinkDown(0);
-    }
-    return first;
-  }
-
-  bubbleUp(index) {
-    while (index > 0) {
-      const parent = Math.floor((index - 1) / 2);
-      if (this.items[parent].priority <= this.items[index].priority) break;
-      [this.items[parent], this.items[index]] = [this.items[index], this.items[parent]];
-      index = parent;
-    }
-  }
-
-  sinkDown(index) {
-    while (true) {
-      const left = index * 2 + 1;
-      const right = left + 1;
-      let smallest = index;
-      if (left < this.items.length && this.items[left].priority < this.items[smallest].priority) smallest = left;
-      if (right < this.items.length && this.items[right].priority < this.items[smallest].priority) smallest = right;
-      if (smallest === index) break;
-      [this.items[smallest], this.items[index]] = [this.items[index], this.items[smallest]];
-      index = smallest;
-    }
-  }
 }

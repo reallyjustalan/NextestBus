@@ -16,7 +16,9 @@ Bus stop, route, and arrival data come from [nusbus.com](https://nusbus.com/) th
 https://api.nusbus.com/api
 ```
 
-This project does not talk to the uNivUS private API directly. The Cloudflare Worker exposes a local proxy endpoint at `/api/nusbus`, forwards requests to `api.nusbus.com`, and returns the upstream JSON. API responses are marked `cache-control: no-store` because bus arrivals are live data.
+This project does not talk to the uNivUS private API directly. The Cloudflare Worker exposes a local proxy endpoint at `/api/nusbus`, forwards requests to `api.nusbus.com`, and returns the upstream JSON.
+
+Live stop details are edge-cached briefly and static catalog responses are cached longer. Directions can request a compact arrivals-only response so route geometry is not retransmitted with every live timing lookup.
 
 The frontend currently uses:
 
@@ -40,9 +42,14 @@ Refresh the snapshot from the NUS campus map autocomplete endpoint with:
 
 ```bash
 npm run refresh:locations
+npm run refresh:routing
 ```
 
 The refresh script normalizes `https://map.nus.edu.sg/index.php/search/ajax_auto`, NUSMods' curated venue-coordinate map, and the current academic term's NUSMods venue API. The NUS map snapshot excludes its bus stops and class venues because official bus stops come from the NUSBus API and NUSMods provides much broader classroom coverage. The NUSMods data is used under its MIT license; see `project/public/data/NUSMODS-LICENSE.txt`.
+
+The routing refresh creates `project/public/data/routing-topology.json`. It contains ordered stops, schedules, and route geometry for NUS shuttle services, but deliberately excludes arrivals and vehicles. This keeps static route topology out of the latency-sensitive live-arrival path.
+
+For a reusable reference of the observed upstream payload shapes, see [docs/nusbus-api.md](docs/nusbus-api.md).
 
 ## Project Layout
 
@@ -143,14 +150,14 @@ origin location
   -> destination location
 ```
 
-The planner runs Dijkstra search over that graph. Edge weights are estimated seconds, but the planner also keeps a separate route-ranking score so that display order can reflect user experience rather than only raw clock time.
+The planner compiles route geometry, cumulative segment times, service occurrences, and transfer walks once. Each query then runs a bounded multi-criteria, round-based transit search. Labels retain elapsed time, route-shape cost, walking distance, transfers, and first/last service identity so an earlier arrival is not incorrectly discarded merely because another label has a lower preference cost.
 
 ### Planner Inputs
 
 `app.js` remains responsible for UI resolution and data loading:
 
 - resolve the selected `From` and `To` items from autocomplete
-- load all NUS shuttle route services needed for planning
+- load the versioned static routing topology, with a live route-loader fallback
 - reuse `state.arrivalsByStop` only while the cached stop data is still fresh (within two refresh intervals of its `updatedAt`)
 - fetch live arrivals for origin candidate stops when needed, forcing a refetch when the cache is stale or holds an earlier error
 - pass the data into `planDirections(input)`
@@ -161,7 +168,7 @@ Freshness matters because the planner reasons in relative minutes from "now". Re
 
 - choose candidate stops around the origin and destination coordinates
 - build the route graph from NUS shuttle services only
-- run Dijkstra search
+- run a bounded multi-criteria transit search, one round per bus ride
 - estimate walking, waiting, riding, transfers, and total duration
 - return normalized `walk` and `bus` legs for rendering
 - return alternatives so the UI can show useful bus options even when walking is fastest
@@ -220,7 +227,7 @@ That is bad UX because users generally prefer waiting at the sensible nearby sto
 The current decision is:
 
 - first-bus wait contributes to the displayed `totalSeconds`
-- first-bus wait has little or no base cost in the Dijkstra route-shape score
+- first-bus wait has little or no base cost in the route-shape score
 - transfer waits still count because mid-route waiting affects the connection
 - plausible tight first buses receive a bounded ranking boost
 - final card ordering prefers faster `totalSeconds` when walking distance and transfers are comparable

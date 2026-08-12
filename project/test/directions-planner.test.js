@@ -451,6 +451,63 @@ test("lists slower overlapping bus services as alternatives", async () => {
   assert.ok(result.alternatives?.some((plan) => plan.legs.some((leg) => leg.type === "bus" && leg.routeCode === "SLOW")));
 });
 
+test("removes a same-service alternative that rides farther and walks farther", async () => {
+  const start = stop("START", 1, 103);
+  const sensibleExit = stop("SENSIBLE", 1.01, 103);
+  const lateExit = stop("LATE", 1.015, 103);
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("Destination", 1.0113, 103),
+    stops: [start, sensibleExit, lateExit],
+    services: [service("S", [start, sensibleExit, lateExit])],
+    arrivalsByStop: new Map(),
+    options: defaultOptions
+  });
+  const plans = [result, ...(result.alternatives || [])];
+  const sameServicePlans = plans.filter((plan) => (
+    plan.legs.some((leg) => leg.type === "bus" && leg.serviceKey === "nus:S")
+  ));
+
+  assert.ok(sameServicePlans.some((plan) => (
+    plan.legs.some((leg) => leg.type === "bus" && leg.toStop.id === "SENSIBLE")
+  )));
+  assert.ok(!sameServicePlans.some((plan) => (
+    plan.legs.some((leg) => leg.type === "bus" && leg.toStop.id === "LATE")
+  )));
+});
+
+test("removes a different-service alternative only when it is clearly worse", async () => {
+  const start = stop("START", 1, 103, [
+    { key: "nus:GOOD", source: "nus", name: "GOOD" },
+    { key: "nus:POOR", source: "nus", name: "POOR" }
+  ]);
+  const sensibleExit = stop("SENSIBLE", 1.01, 103, [{ key: "nus:GOOD", source: "nus", name: "GOOD" }]);
+  const lateExit = stop("LATE", 1.016, 103, [{ key: "nus:POOR", source: "nus", name: "POOR" }]);
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("Destination", 1.011, 103),
+    stops: [start, sensibleExit, lateExit],
+    services: [
+      service("GOOD", [start, sensibleExit]),
+      service("POOR", [start, lateExit], {
+        route: {
+          path: [
+            pathPoint(1, 103, "START"),
+            pathPoint(1.025, 103),
+            pathPoint(1.016, 103, "LATE")
+          ]
+        }
+      })
+    ],
+    arrivalsByStop: new Map(),
+    options: defaultOptions
+  });
+  const plans = [result, ...(result.alternatives || [])];
+
+  assert.ok(plans.some((plan) => plan.legs.some((leg) => leg.serviceKey === "nus:GOOD")));
+  assert.ok(!plans.some((plan) => plan.legs.some((leg) => leg.serviceKey === "nus:POOR")));
+});
+
 test("does not let a small walking advantage outrank a dramatically faster route", async () => {
   const nearStop = stop("NEAR", 1.0001, 103, [{ key: "nus:SLOW", source: "nus", name: "SLOW" }]);
   const farStop = stop("FAR", 1.003, 103, [{ key: "nus:FAST", source: "nus", name: "FAST" }]);
@@ -581,6 +638,102 @@ test("handles loop routes with duplicated stop occurrences", async () => {
   const busLeg = result.legs.find((leg) => leg.type === "bus");
   assert.equal(busLeg.fromStop.id, "B");
   assert.equal(busLeg.toStop.id, "A");
+});
+
+test("ages relative arrival minutes from the source snapshot time", async () => {
+  const a = stop("A", 1, 103);
+  const b = stop("B", 1.02, 103);
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("End", 1.02, 103),
+    stops: [a, b],
+    services: [service("S", [a, b])],
+    arrivalsByStop: new Map([
+      ["A", {
+        updatedAt: "2026-08-12T03:59:00.000Z",
+        services: [{ key: "nus:S", arrivals: [arrival(2)] }]
+      }]
+    ]),
+    departureTime: "2026-08-12T04:00:00.000Z",
+    options: defaultOptions
+  });
+
+  const busLeg = result.legs.find((leg) => leg.type === "bus");
+  assert.equal(busLeg.waitSeconds, 60);
+});
+
+test("does not route onto a weekday-only service during the weekend", async () => {
+  const a = stop("A", 1, 103);
+  const b = stop("B", 1.02, 103);
+  const weekdayService = service("S", [a, b], {
+    route: {
+      schedule: { label: "Mon-Fri", firstTime: "07:00", lastTime: "23:00" }
+    }
+  });
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("End", 1.02, 103),
+    stops: [a, b],
+    services: [weekdayService],
+    arrivalsByStop: new Map(),
+    departureTime: "2026-08-15T12:00:00+08:00",
+    options: defaultOptions
+  });
+
+  assert.equal(result.legs.length, 1);
+  assert.equal(result.legs[0].type, "walk");
+});
+
+test("evaluates service hours in Singapore time", async () => {
+  const a = stop("A", 1, 103);
+  const b = stop("B", 1.02, 103);
+  const weekdayService = service("S", [a, b], {
+    route: {
+      schedule: { label: "Mon-Fri", firstTime: "07:00", lastTime: "23:00" }
+    }
+  });
+  const result = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("End", 1.02, 103),
+    stops: [a, b],
+    services: [weekdayService],
+    arrivalsByStop: new Map(),
+    departureTime: "2026-08-17T00:00:00.000Z",
+    options: defaultOptions
+  });
+
+  assert.ok(result.legs.some((leg) => leg.type === "bus"));
+});
+
+test("returns an initial route before slow arrivals and reports late data", async () => {
+  const a = stop("A", 1, 103);
+  const b = stop("B", 1.02, 103);
+  let releaseArrivals;
+  const arrivalsReady = new Promise((resolve) => {
+    releaseArrivals = resolve;
+  });
+  let reportLateArrivals;
+  const lateArrivalsReported = new Promise((resolve) => {
+    reportLateArrivals = resolve;
+  });
+
+  const initialPlan = await planDirections({
+    fromItem: place("Start", 1, 103),
+    toItem: place("End", 1.02, 103),
+    stops: [a, b],
+    services: [service("S", [a, b])],
+    arrivalsByStop: new Map(),
+    getArrivalsForStop: async () => {
+      await arrivalsReady;
+      return { services: [{ key: "nus:S", arrivals: [arrival(2)] }] };
+    },
+    onLateArrivals: reportLateArrivals,
+    options: { ...defaultOptions, arrivalWaitBudgetMs: 0 }
+  });
+
+  assert.equal(initialPlan.legs.find((leg) => leg.type === "bus").selectedArrival, null);
+  releaseArrivals();
+  await lateArrivalsReported;
 });
 
 function stop(id, latitude, longitude, services = [{ key: "nus:S", source: "nus", name: "S" }]) {

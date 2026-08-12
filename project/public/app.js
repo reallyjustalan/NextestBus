@@ -1,4 +1,9 @@
-import { candidateStopsForPoint, comparePlans, planDirections } from "./directions-planner.js";
+import {
+  candidateStopsForPoint,
+  comparePlans,
+  compileRoutingNetwork,
+  planDirections
+} from "./directions-planner.js";
 
 const API_BASE = "https://api.nusbus.com/api";
 const PINNED_STOPS_KEY = "nusbus-pinned-stops";
@@ -8,6 +13,7 @@ const FRESHNESS_TICK_MS = 5000;
 const DIRECTIONS_ARRIVALS_MAX_AGE_MS = REFRESH_INTERVAL_MS * 2;
 const LOCATIONS_URL = "/data/nus-map-locations.json";
 const NUSMODS_VENUES_URL = "/data/nusmods-venues.json";
+const ROUTING_TOPOLOGY_URL = "/data/routing-topology.json";
 const PULL_REFRESH_THRESHOLD_PX = 72;
 const PULL_REFRESH_MAX_PX = 98;
 const PULL_REFRESH_HOLD_MS = 700;
@@ -35,7 +41,12 @@ const state = {
   directionsResult: null,
   directionsError: "",
   directionsLoading: false,
-  directionsAutoSubmitTimer: null,
+  directionsProgress: { phase: "idle" },
+  directionsRequestSequence: 0,
+  directionsTopology: null,
+  directionsNetwork: null,
+  directionsTopologyPromise: null,
+  directionsSearchTimer: null,
   directionsLastRequestKey: "",
   isLoadingLocations: false,
   locationsLoadPromise: null,
@@ -57,6 +68,7 @@ let logoRefreshSpinTimer = null;
 let deferredInstallPrompt = null;
 const routeTimingFetches = new Set();
 const routeVehicleMemory = new Map();
+const stopDetailFetches = new Map();
 
 const elements = {
   loadStatus: document.getElementById("loadStatus"),
@@ -189,6 +201,30 @@ async function loadLocations() {
   } finally {
     state.isLoadingLocations = false;
     state.locationsLoadPromise = null;
+  }
+}
+
+async function loadDirectionTopology() {
+  if (state.directionsTopology && state.directionsNetwork) return state.directionsTopology;
+  if (state.directionsTopologyPromise) return state.directionsTopologyPromise;
+
+  state.directionsTopologyPromise = (async () => {
+    const topology = await fetchJson(new URL(ROUTING_TOPOLOGY_URL, window.location.origin));
+    if (!Array.isArray(topology.stops) || !topology.stops.length) {
+      throw new Error("The cached routing stop dataset is unavailable.");
+    }
+    if (!Array.isArray(topology.services) || !topology.services.length) {
+      throw new Error("The cached routing service dataset is unavailable.");
+    }
+    state.directionsTopology = topology;
+    state.directionsNetwork = compileRoutingNetwork(topology.stops, topology.services);
+    return topology;
+  })();
+
+  try {
+    return await state.directionsTopologyPromise;
+  } finally {
+    state.directionsTopologyPromise = null;
   }
 }
 
@@ -365,10 +401,23 @@ async function openStop(stopId) {
 }
 
 async function loadStopDetails(stopId, options = {}) {
+  const fetchKey = `${stopId}:${options.compact === true ? "compact" : "full"}`;
+  if (stopDetailFetches.has(fetchKey)) return stopDetailFetches.get(fetchKey);
+  const request = loadStopDetailsRequest(stopId, options);
+  stopDetailFetches.set(fetchKey, request);
+  try {
+    return await request;
+  } finally {
+    if (stopDetailFetches.get(fetchKey) === request) stopDetailFetches.delete(fetchKey);
+  }
+}
+
+async function loadStopDetailsRequest(stopId, options = {}) {
   const force = options.force === true;
   const silent = options.silent === true;
+  const compact = options.compact === true;
   const cached = state.arrivalsByStop.get(stopId);
-  if (!force && cached?.data) return cached.data;
+  if (!force && cached?.data && (compact || cached.compact !== true)) return cached.data;
   if (!force && cached?.error) throw cached.error;
 
   if (!silent) {
@@ -377,8 +426,11 @@ async function loadStopDetails(stopId, options = {}) {
   }
 
   try {
-    const data = await apiGet(`/stops/${encodeURIComponent(stopId)}`);
-    state.arrivalsByStop.set(stopId, { data });
+    const data = await apiGet(
+      `/stops/${encodeURIComponent(stopId)}`,
+      compact ? { compact: "arrivals" } : {}
+    );
+    state.arrivalsByStop.set(stopId, { data, compact });
     markUpdated();
     return data;
   } catch (error) {
@@ -818,7 +870,7 @@ async function openDirectionsView(options = {}) {
   state.activeRouteKey = "";
   state.openStopId = "";
   if (options.pushHistory !== false) history.pushState({ view: "directions" }, "", "#directions");
-  await loadLocations();
+  await Promise.all([loadLocations(), loadDirectionTopology().catch(() => null)]);
   const restored = await restoreDirectionsFromHash();
   renderDirectionsSuggestions();
   renderDirectionsResult();
@@ -966,6 +1018,7 @@ async function restoreDirectionsFromHash() {
 
   state.directionsFromItem = fromItem;
   state.directionsToItem = toItem;
+  prefetchDirectionsArrivals(fromItem);
   elements.directionsFromInput.value = fromItem.title;
   elements.directionsToInput.value = toItem.title;
   state.activeDirectionsField = "from";
@@ -1051,15 +1104,33 @@ function selectedDirectionItem(field) {
 function setSelectedDirectionItem(field, item) {
   if (field === "from") {
     state.directionsFromItem = item;
+    prefetchDirectionsArrivals(item);
   } else {
     state.directionsToItem = item;
   }
 }
 
+function prefetchDirectionsArrivals(item) {
+  if (!item?.coordinates) return;
+  loadDirectionTopology()
+    .then(() => {
+      const stops = state.directionsNetwork?.stops || state.stops.filter(isRoutableNusStop);
+      const candidates = candidateStopsForPoint(item.coordinates, stops);
+      return Promise.allSettled(candidates.map(({ stop }) => loadDirectionsStopDetails(stop.id)));
+    })
+    .catch(() => {
+      // Search can still use the live route loader if prefetching is unavailable.
+    });
+}
+
 function clearDirectionsRequestState() {
+  state.directionsRequestSequence += 1;
   state.directionsResult = null;
   state.directionsError = "";
   state.directionsLastRequestKey = "";
+  state.directionsLoading = false;
+  state.directionsProgress = { phase: "idle" };
+  elements.directionsSubmitButton.disabled = false;
 }
 
 function directionSuggestions(query, limit = 10) {
@@ -1125,16 +1196,6 @@ function directionScore(item, query) {
   }
 
   return score;
-}
-
-function exactDirectionMatch(query) {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return null;
-  return directionItems().find((item) => {
-    return [item.title, item.raw?.id, item.raw?.busStopCode, item.raw?.placeCode, item.raw?.postal, item.shortLabel].some((value) => {
-      return String(value || "").trim().toLowerCase() === normalized;
-    });
-  });
 }
 
 function renderDirectionsSuggestions() {
@@ -1213,11 +1274,16 @@ function pickDirectionSuggestion(itemId) {
   setSelectedDirectionItem(field, item);
   setDirectionInputValue(field, item.title);
   clearDirectionsRequestState();
-  state.activeDirectionsField = field === "from" ? "to" : "from";
-  renderDirectionsSuggestions();
   renderDirectionsResult();
-  (state.activeDirectionsField === "from" ? elements.directionsFromInput : elements.directionsToInput).focus();
-  scheduleDirectionsAutoSubmit();
+  if (state.directionsFromItem && state.directionsToItem) {
+    elements.directionsSuggestions.hidden = true;
+    elements.directionsSuggestions.replaceChildren();
+  } else {
+    state.activeDirectionsField = field === "from" ? "to" : "from";
+    renderDirectionsSuggestions();
+    (state.activeDirectionsField === "from" ? elements.directionsFromInput : elements.directionsToInput).focus();
+  }
+  scheduleConfirmedDirectionsSearch();
 }
 
 async function useLocationSearchResult(itemId) {
@@ -1235,9 +1301,7 @@ async function useLocationSearchResult(itemId) {
 }
 
 function resolveDirectionItem(field) {
-  const selected = selectedDirectionItem(field);
-  if (selected) return selected;
-  return exactDirectionMatch(directionInputValue(field));
+  return selectedDirectionItem(field);
 }
 
 function routableStopForItem(item) {
@@ -1293,6 +1357,15 @@ function alreadyThereDirections(fromItem, toItem) {
 }
 
 async function loadDirectionPlannerServices() {
+  try {
+    const topology = await loadDirectionTopology();
+    return topology.services;
+  } catch {
+    return loadDirectionPlannerServicesLive();
+  }
+}
+
+async function loadDirectionPlannerServicesLive() {
   const serviceKeys = [
     ...new Set(
       state.stops
@@ -1342,7 +1415,30 @@ function freshDirectionsArrivalsByStop() {
 
 async function loadDirectionsStopDetails(stopId) {
   const force = !isFreshArrivalsEntry(state.arrivalsByStop.get(stopId));
-  return loadStopDetails(stopId, { silent: true, force });
+  return loadStopDetails(stopId, { silent: true, force, compact: true });
+}
+
+function updateDirectionsProgress(progress) {
+  state.directionsProgress = { ...state.directionsProgress, ...progress };
+  if (state.directionsLoading) renderDirectionsResult();
+}
+
+function markDirectionsPerformance(requestId, phase) {
+  if (!window.performance?.mark) return;
+  performance.mark(`directions:${requestId}:${phase}`);
+}
+
+function measureDirectionsPerformance(requestId, phase, fromPhase = "start") {
+  if (!window.performance?.measure) return;
+  try {
+    performance.measure(
+      `directions:${phase}`,
+      `directions:${requestId}:${fromPhase}`,
+      `directions:${requestId}:${phase}`
+    );
+  } catch {
+    // Performance measurement must never interrupt route finding.
+  }
 }
 
 async function findDirections(event, options = {}) {
@@ -1352,6 +1448,8 @@ async function findDirections(event, options = {}) {
   const fromItem = resolveDirectionItem("from");
   const toItem = resolveDirectionItem("to");
   const requestKey = fromItem && toItem ? `${fromItem.id}->${toItem.id}` : "";
+  const keepExistingResultVisible = options.background === true && Boolean(state.directionsResult);
+  let shouldRenderResult = true;
 
   if (!fromItem || !toItem) {
     state.directionsResult = null;
@@ -1385,36 +1483,174 @@ async function findDirections(event, options = {}) {
   }
 
   if (!options.force && requestKey && requestKey === state.directionsLastRequestKey && state.directionsResult) return;
+  const requestId = ++state.directionsRequestSequence;
   state.directionsLastRequestKey = requestKey;
-  state.directionsResult = null;
-  state.directionsLoading = true;
-  renderDirectionsResult();
+  state.directionsProgress = { phase: "topology" };
+  elements.directionsSubmitButton.disabled = true;
+  elements.directionsSuggestions.hidden = true;
+  elements.directionsSuggestions.replaceChildren();
+  markDirectionsPerformance(requestId, "start");
+  if (keepExistingResultVisible) {
+    state.directionsLoading = false;
+  } else {
+    state.directionsResult = null;
+    state.directionsLoading = true;
+    renderDirectionsResult();
+  }
 
   try {
     const services = await loadDirectionPlannerServices();
+    if (requestId !== state.directionsRequestSequence) return;
+    markDirectionsPerformance(requestId, "topology");
+    measureDirectionsPerformance(requestId, "topology");
+    updateDirectionsProgress({ phase: "arrivals", completed: 0, total: 0 });
     const directions = await planDirections({
       fromItem,
       toItem,
-      stops: state.stops,
+      stops: state.directionsTopology?.stops || state.stops,
       services,
+      compiledNetwork: state.directionsNetwork,
       arrivalsByStop: freshDirectionsArrivalsByStop(),
-      getArrivalsForStop: loadDirectionsStopDetails
+      getArrivalsForStop: loadDirectionsStopDetails,
+      onProgress(progress) {
+        if (requestId !== state.directionsRequestSequence) return;
+        updateDirectionsProgress(progress);
+        markDirectionsPerformance(requestId, progress.phase);
+        measureDirectionsPerformance(requestId, progress.phase);
+      },
+      onLateArrivals() {
+        if (requestId !== state.directionsRequestSequence) return;
+        window.setTimeout(() => {
+          if (requestId !== state.directionsRequestSequence) return;
+          findDirections(null, { pushHistory: false, force: true, background: true }).catch(() => {
+            // The fast initial result remains visible if late timing refinement fails.
+          });
+        }, 0);
+      }
     });
+    if (requestId !== state.directionsRequestSequence) return;
+    const previousResult = state.directionsResult;
     state.directionsResult = {
       directions,
       fromItem,
       toItem
     };
+    window.setTimeout(() => {
+      refineDirectionsTransferTimings({ requestId, fromItem, toItem, services }).catch(() => {
+        // The initial route remains useful when transfer timing refinement fails.
+      });
+    }, 0);
     elements.directionsSuggestions.hidden = true;
     elements.directionsSuggestions.replaceChildren();
     if (options.pushHistory !== false) pushDirectionsGuideHistory(fromItem, toItem);
     markUpdated();
+    if (keepExistingResultVisible && patchDirectionsResult(previousResult, state.directionsResult)) {
+      shouldRenderResult = false;
+      return;
+    }
   } catch (error) {
+    if (requestId !== state.directionsRequestSequence) return;
+    if (keepExistingResultVisible) throw error;
     state.directionsError = error.message || "Could not find a route.";
   } finally {
-    state.directionsLoading = false;
-    renderDirectionsResult();
+    if (requestId === state.directionsRequestSequence) {
+      state.directionsLoading = false;
+      elements.directionsSubmitButton.disabled = false;
+      if (shouldRenderResult) renderDirectionsResult();
+    }
   }
+}
+
+async function refineDirectionsTransferTimings({ requestId, fromItem, toItem, services }) {
+  if (requestId !== state.directionsRequestSequence || !state.directionsResult) return;
+  const plans = [
+    state.directionsResult.directions,
+    ...(state.directionsResult.directions.alternatives || [])
+  ];
+  const transferStopIds = new Set();
+  for (const plan of plans) {
+    const busLegs = (plan.legs || []).filter((leg) => leg.type === "bus");
+    for (const leg of busLegs.slice(1)) {
+      if (!isFreshArrivalsEntry(state.arrivalsByStop.get(leg.fromStop?.id))) {
+        transferStopIds.add(leg.fromStop?.id);
+      }
+    }
+  }
+  transferStopIds.delete(undefined);
+  if (!transferStopIds.size) return;
+
+  const refreshResults = await Promise.allSettled([...transferStopIds].map(loadDirectionsStopDetails));
+  if (!refreshResults.some((result) => result.status === "fulfilled")) return;
+  if (requestId !== state.directionsRequestSequence) return;
+  const directions = await planDirections({
+    fromItem,
+    toItem,
+    stops: state.directionsTopology?.stops || state.stops,
+    services,
+    compiledNetwork: state.directionsNetwork,
+    arrivalsByStop: freshDirectionsArrivalsByStop()
+  });
+  if (requestId !== state.directionsRequestSequence) return;
+  const previousResult = state.directionsResult;
+  state.directionsResult = { directions, fromItem, toItem };
+  if (!patchDirectionsResult(previousResult, state.directionsResult)) renderDirectionsResult();
+}
+
+function patchDirectionsResult(previousResult, nextResult) {
+  if (!previousResult || !nextResult) return false;
+  if (previousResult.directions?.kind === "already-there" || nextResult.directions?.kind === "already-there") return false;
+
+  const groups = groupDirectionsPlans([nextResult.directions, ...(nextResult.directions.alternatives || [])]);
+  const cards = [...elements.directionsResult.querySelectorAll(".directions-plan-card[data-directions-plan-key]")];
+  if (cards.length !== groups.length) return false;
+
+  const groupsByKey = new Map(groups.map((group) => [directionsShapeKey(group.directions), group]));
+  for (const card of cards) {
+    const planKey = card.dataset.directionsPlanKey || "";
+    if (!groupsByKey.has(planKey)) return false;
+  }
+
+  const walkingContext = directionsWalkingContext(groups);
+  for (const card of cards) {
+    const group = groupsByKey.get(card.dataset.directionsPlanKey || "");
+    if (!group || !patchDirectionsPlanCard(card, group, walkingContext)) return false;
+  }
+
+  return true;
+}
+
+function patchDirectionsPlanCard(card, group, walkingContext) {
+  const summary = card.querySelector(".directions-plan-summary");
+  if (summary) summary.textContent = renderDirectionsSummary(group.plans);
+
+  const meta = card.querySelector(".directions-plan-meta");
+  if (meta) meta.innerHTML = renderDirectionsMeta(group.plans, walkingContext);
+
+  const variants = new Map();
+  for (let index = 0; index < (group.directions.legs || []).length; index += 1) {
+    for (const variant of busLegVariantsForGroup(group, index)) {
+      variants.set(directionsVariantKey(variant), variant);
+    }
+  }
+
+  const serviceOptions = [...card.querySelectorAll(".directions-service-option[data-directions-variant-key]")];
+  if (serviceOptions.length !== variants.size) return false;
+
+  for (const option of serviceOptions) {
+    const key = option.dataset.directionsVariantKey || "";
+    const leg = variants.get(key);
+    if (!leg) return false;
+    option.classList.toggle("is-timing-unavailable", !directionsLegHasLiveTiming(leg));
+
+    const chips = option.querySelector(".directions-arrival-chips");
+    const content = option.querySelector(".directions-service-content");
+    if (!chips || !content) return false;
+
+    chips.innerHTML = renderDirectionsArrivalChips(leg.boardingArrivals || []);
+    content.innerHTML = renderDirectionsTimingNote(leg);
+  }
+
+  return true;
 }
 
 function pushDirectionsGuideHistory(fromItem, toItem) {
@@ -1434,19 +1670,20 @@ function swapDirections() {
   elements.directionsFromInput.value = elements.directionsToInput.value;
   state.directionsToItem = fromItem;
   elements.directionsToInput.value = fromValue;
+  prefetchDirectionsArrivals(state.directionsFromItem);
   state.activeDirectionsField = state.directionsFromItem ? "to" : "from";
   clearDirectionsRequestState();
   renderDirectionsSuggestions();
   renderDirectionsResult();
-  scheduleDirectionsAutoSubmit();
+  scheduleConfirmedDirectionsSearch();
 }
 
-function scheduleDirectionsAutoSubmit() {
-  window.clearTimeout(state.directionsAutoSubmitTimer);
-  state.directionsAutoSubmitTimer = window.setTimeout(() => {
+function scheduleConfirmedDirectionsSearch() {
+  window.clearTimeout(state.directionsSearchTimer);
+  state.directionsSearchTimer = window.setTimeout(() => {
     if (elements.directionsView.hidden || state.directionsLoading) return;
-    const fromItem = resolveDirectionItem("from");
-    const toItem = resolveDirectionItem("to");
+    const fromItem = state.directionsFromItem;
+    const toItem = state.directionsToItem;
     if (!fromItem || !toItem) return;
     if (!hasRoutableDirectionItem(fromItem) || !hasRoutableDirectionItem(toItem)) return;
     findDirections();
@@ -1455,9 +1692,10 @@ function scheduleDirectionsAutoSubmit() {
 
 function renderDirectionsResult() {
   if (elements.directionsView.hidden) return;
+  elements.directionsResult.setAttribute("aria-busy", String(state.directionsLoading));
 
   if (state.directionsLoading) {
-    elements.directionsResult.innerHTML = `<div class="empty-state compact">Finding route...</div>`;
+    elements.directionsResult.innerHTML = renderDirectionsLoadingState();
     return;
   }
 
@@ -1477,6 +1715,55 @@ function renderDirectionsResult() {
   }
 
   elements.directionsResult.innerHTML = renderDirectionsPlan(result);
+}
+
+function renderDirectionsLoadingState() {
+  const progress = state.directionsProgress || { phase: "topology" };
+  const phaseOrder = ["topology", "candidates", "arrivals", "routing", "complete"];
+  const currentIndex = Math.max(0, phaseOrder.indexOf(progress.phase));
+  const fromItem = resolveDirectionItem("from");
+  const toItem = resolveDirectionItem("to");
+  const directDistance = fromItem?.coordinates && toItem?.coordinates
+    ? haversine(fromItem.coordinates, toItem.coordinates)
+    : Number.NaN;
+  const walkPreview = Number.isFinite(directDistance)
+    ? `Walking directly is about ${formatDuration((directDistance * 1.25) / 4.8 * 3600)}. Checking whether a shuttle is better.`
+    : "Checking walking and shuttle options.";
+  const candidates = progress.originCandidates || [];
+  const arrivalText = progress.total
+    ? `Checking live arrivals — ${Math.min(progress.completed || 0, progress.total)} of ${progress.total} ready`
+    : "Checking live arrivals";
+  const steps = [
+    "Preparing cached shuttle network",
+    candidates.length ? `Found ${candidates.length} nearby boarding stops` : "Finding nearby boarding stops",
+    arrivalText,
+    "Comparing direct and transfer routes"
+  ];
+
+  return `
+    <section class="directions-loading-card" aria-label="Finding directions">
+      <header>
+        <span class="directions-loading-spinner" aria-hidden="true"></span>
+        <div>
+          <strong>Finding the best route</strong>
+          <p>${escapeHtml(walkPreview)}</p>
+        </div>
+      </header>
+      <ol class="directions-progress-list">
+        ${steps.map((step, index) => {
+          const status = index < currentIndex ? "is-complete" : index === currentIndex ? "is-active" : "";
+          return `<li class="${status}"><span aria-hidden="true"></span>${escapeHtml(step)}</li>`;
+        }).join("")}
+      </ol>
+      ${candidates.length ? `
+        <div class="directions-candidate-list" aria-label="Nearby boarding stops">
+          ${candidates.map(({ stop, distanceKm }) => `
+            <span><strong>${escapeHtml(stop.shortLabel || stop.title || stop.id)}</strong> ${escapeHtml(distanceLabel(distanceKm))}</span>
+          `).join("")}
+        </div>
+      ` : ""}
+    </section>
+  `;
 }
 
 function renderDirectionsPlan(result) {
@@ -1574,14 +1861,15 @@ function renderDirectionsPlanCard(group, fromItem, toItem, optionIndex = 0, walk
   const routeSummary = renderDirectionsSummary(group.plans);
   const routeMeta = renderDirectionsMeta(group.plans, walkingContext);
   const mode = directionsModeForPlan(directions);
+  const planKey = directionsShapeKey(directions);
 
   if (!busLegs.length) {
     return `
-      <section class="directions-plan-card">
+      <section class="directions-plan-card" data-directions-plan-key="${escapeHtml(planKey)}">
         <header class="directions-plan-head">
           ${renderDirectionsModeGraphic(mode)}
           <div>
-            <h3>${escapeHtml(routeSummary)}</h3>
+            <h3 class="directions-plan-summary">${escapeHtml(routeSummary)}</h3>
             <p class="directions-plan-meta">${routeMeta}</p>
           </div>
         </header>
@@ -1593,11 +1881,11 @@ function renderDirectionsPlanCard(group, fromItem, toItem, optionIndex = 0, walk
   }
 
   return `
-    <section class="directions-plan-card">
+    <section class="directions-plan-card" data-directions-plan-key="${escapeHtml(planKey)}">
       <header class="directions-plan-head">
         ${renderDirectionsModeGraphic(mode)}
         <div>
-          <h3>${escapeHtml(routeSummary)}</h3>
+          <h3 class="directions-plan-summary">${escapeHtml(routeSummary)}</h3>
           <p class="directions-plan-meta">${routeMeta}</p>
         </div>
       </header>
@@ -1761,8 +2049,9 @@ function busLegVariantsForGroup(group, legIndex) {
 function renderDirectionsBusVariant(leg) {
   const arrivalChips = renderDirectionsArrivalChips(leg.boardingArrivals || []);
   const unavailableClass = directionsLegHasLiveTiming(leg) ? "" : " is-timing-unavailable";
+  const variantKey = directionsVariantKey(leg);
   return `
-    <div class="directions-service-option${unavailableClass}">
+    <div class="directions-service-option${unavailableClass}" data-directions-variant-key="${escapeHtml(variantKey)}">
       <div class="directions-service-row">
         ${renderDirectionsRouteBadge(leg.routeCode, leg.serviceKey, "directions-leg-route")}
         <div class="directions-arrival-chips" aria-label="${escapeHtml(leg.routeCode)} arrival timings">
@@ -1793,15 +2082,26 @@ function renderDirectionsWalkLeg(leg) {
 
 function renderDirectionsTimingNote(leg) {
   let waitText = leg.selectedArrival
-    ? `Catch the ${leg.selectedArrival.display || minutesLabel(leg.selectedArrival.minutes)} bus`
-    : "Live bus timings unavailable";
+    ? `Live: catch the ${leg.selectedArrival.display || minutesLabel(leg.selectedArrival.minutes)} bus`
+    : `Estimated wait ${formatDuration(leg.waitSeconds)}`;
   if (leg.catchStatus === "tight" && leg.selectedArrival) {
     waitText = `Tight catch: ${leg.selectedArrival.display || minutesLabel(leg.selectedArrival.minutes)} bus`;
   }
   const rideText = `${formatDuration(leg.rideSeconds)} ride`;
   const missed = (leg.missedArrivals || [])[0];
   const missedText = missed ? `Skipped ${missed.display || minutesLabel(missed.minutes)} bus` : "";
-  return `<p class="directions-transfer-note">${escapeHtml([waitText, rideText, missedText].filter(Boolean).join(" - "))}</p>`;
+  const updatedAtMs = Date.parse(leg.selectedArrival?._snapshotUpdatedAt || "");
+  const freshnessText = Number.isFinite(updatedAtMs)
+    ? `updated ${freshnessAgeLabel(Date.now() - updatedAtMs)}`
+    : "";
+  return `<p class="directions-transfer-note">${escapeHtml([waitText, rideText, missedText, freshnessText].filter(Boolean).join(" - "))}</p>`;
+}
+
+function freshnessAgeLabel(ageMs) {
+  const seconds = Math.max(0, Math.round(ageMs / 1000));
+  if (seconds < 10) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  return `${Math.round(seconds / 60)} min ago`;
 }
 
 function routeColorForCode(routeCode) {
@@ -1830,6 +2130,10 @@ function renderDirectionsArrivalChip(arrival) {
 
 function renderDirectionsPlaceholderChip() {
   return renderEtaChip("?", Number.NaN, "route-stop-eta is-muted is-placeholder", "Timing unavailable");
+}
+
+function directionsVariantKey(leg) {
+  return `${leg.serviceKey || leg.routeCode || "service"}:${leg.fromStop?.id || ""}->${leg.toStop?.id || ""}`;
 }
 
 function directionsLegHasLiveTiming(leg) {
@@ -2836,10 +3140,7 @@ elements.directionsFromInput.addEventListener("input", () => {
   state.directionsFromItem = null;
   clearDirectionsRequestState();
   renderDirectionsSuggestions();
-  loadLocations().then(() => {
-    renderDirectionsSuggestions();
-    scheduleDirectionsAutoSubmit();
-  });
+  loadLocations().then(renderDirectionsSuggestions);
   renderDirectionsResult();
 });
 elements.directionsToInput.addEventListener("input", () => {
@@ -2847,10 +3148,7 @@ elements.directionsToInput.addEventListener("input", () => {
   state.directionsToItem = null;
   clearDirectionsRequestState();
   renderDirectionsSuggestions();
-  loadLocations().then(() => {
-    renderDirectionsSuggestions();
-    scheduleDirectionsAutoSubmit();
-  });
+  loadLocations().then(renderDirectionsSuggestions);
   renderDirectionsResult();
 });
 elements.directionsSuggestions.addEventListener("click", (event) => {
@@ -2935,3 +3233,9 @@ registerServiceWorker();
 initInstallPrompt();
 startAutoRefresh();
 loadStops();
+const preloadRoutingTopology = () => loadDirectionTopology().catch(() => null);
+if ("requestIdleCallback" in window) {
+  window.requestIdleCallback(preloadRoutingTopology, { timeout: 2500 });
+} else {
+  window.setTimeout(preloadRoutingTopology, 500);
+}

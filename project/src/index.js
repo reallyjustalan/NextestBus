@@ -13,6 +13,7 @@ function sendJson(body, status = 200, headers = {}) {
 }
 
 async function fetchUpstreamJson(url) {
+  const startedAt = Date.now();
   const response = await fetch(url, {
     headers: {
       accept: "application/json",
@@ -34,13 +35,37 @@ async function fetchUpstreamJson(url) {
     contentType:
       response.headers.get("content-type") ||
       "application/json; charset=utf-8",
-    data
+    data,
+    durationMs: Date.now() - startedAt
   };
 }
 
-async function proxyNusBus(request) {
+function cacheSecondsForEndpoint(endpoint) {
+  if (/^\/stops\/[^/]+$/.test(endpoint) || endpoint === "/directions") return 15;
+  if (endpoint === "/stops" || endpoint === "/services") return 300;
+  if (/^\/services\/[^/]+$/.test(endpoint)) return 60;
+  return 0;
+}
+
+function compactArrivalsPayload(data) {
+  return {
+    updatedAt: data.updatedAt,
+    stop: data.stop,
+    services: (data.services || []).map((service) => ({
+      key: service.key,
+      name: service.name,
+      subtitle: service.subtitle,
+      source: service.source,
+      color: service.color,
+      arrivals: service.arrivals || []
+    }))
+  };
+}
+
+async function proxyNusBus(request, context) {
   const url = new URL(request.url);
   const endpoint = url.searchParams.get("endpoint");
+  const compact = url.searchParams.get("compact");
 
   if (!endpoint || !endpoint.startsWith("/")) {
     return sendJson(
@@ -52,21 +77,41 @@ async function proxyNusBus(request) {
   const upstreamUrl = new URL(`${NUSBUS_API_BASE}${endpoint}`);
 
   for (const [key, value] of url.searchParams.entries()) {
-    if (key !== "endpoint" && value) {
+    if (key !== "endpoint" && key !== "compact" && value) {
       upstreamUrl.searchParams.set(key, value);
     }
   }
 
   try {
-    const upstream = await fetchUpstreamJson(upstreamUrl);
+    const cacheSeconds = cacheSecondsForEndpoint(endpoint);
+    const cache = typeof caches !== "undefined" ? caches.default : null;
+    if (cache && cacheSeconds > 0) {
+      const cached = await cache.match(request);
+      if (cached) {
+        const response = new Response(cached.body, cached);
+        response.headers.set("x-nusbus-cache", "HIT");
+        response.headers.set("server-timing", "nusbus-cache;desc=hit;dur=0");
+        return response;
+      }
+    }
 
-    return new Response(JSON.stringify(upstream.data), {
+    const upstream = await fetchUpstreamJson(upstreamUrl);
+    const data = compact === "arrivals" ? compactArrivalsPayload(upstream.data) : upstream.data;
+    const response = new Response(JSON.stringify(data), {
       status: upstream.status,
       headers: {
         "content-type": upstream.contentType,
-        "cache-control": "no-store"
+        "cache-control": cacheSeconds > 0
+          ? `public, max-age=${cacheSeconds}, stale-while-revalidate=75, stale-if-error=90`
+          : "no-store",
+        "x-nusbus-cache": "MISS",
+        "server-timing": `nusbus-upstream;dur=${upstream.durationMs}`
       }
     });
+    if (cache && cacheSeconds > 0 && upstream.status === 200) {
+      context?.waitUntil(cache.put(request, response.clone()));
+    }
+    return response;
   } catch (error) {
     return sendJson(
       {
@@ -94,7 +139,7 @@ async function fetchLocationsJson(request, env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, context) {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/nusbus") {
@@ -102,7 +147,7 @@ export default {
         return sendJson({ message: "Method not allowed." }, 405);
       }
 
-      return proxyNusBus(request);
+      return proxyNusBus(request, context);
     }
 
     if (url.pathname === "/api/locations") {
