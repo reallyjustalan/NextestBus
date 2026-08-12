@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-06-04T07:13:39.853Z",
+  "generatedAt": "2026-08-12T03:16:35.242Z",
   "source": "https://map.nus.edu.sg/index.php/search/ajax_auto",
   "note": "Normalized from the NUS campus map autocomplete endpoint. Bus stop and lecture-theatre records are excluded because the app loads official bus stops from the NUSBus API and directions autocomplete should target places/buildings rather than class venues.",
   "count": 756,
-  "excludedCount": 99,
+  "excludedCount": 105,
   "locations": [
     {
       "id": "food_outlet:27:7-11-convenience-store",
@@ -5718,27 +5718,6 @@
       "sourceTable": "faculty"
     },
     {
-      "id": "food_outlet:9:dilys-creation",
-      "type": "venue",
-      "title": "Dilys Creation",
-      "roomName": "Engineering Blk E4",
-      "category": "food_outlet",
-      "categoryLabel": "Food Outlet",
-      "campusName": "Kent Ridge Campus",
-      "placeCode": "",
-      "buildingName": "",
-      "streetName": "Engineering Drive 1",
-      "block": "9",
-      "postal": "117575",
-      "unitNo": "",
-      "coordinates": {
-        "latitude": 1.298474249,
-        "longitude": 103.7722897
-      },
-      "sourceId": "9",
-      "sourceTable": "food_outlet"
-    },
-    {
       "id": "food_outlet:12:dilys-creation",
       "type": "venue",
       "title": "Dilys Creation",
@@ -5757,6 +5736,27 @@
         "longitude": 103.7803196
       },
       "sourceId": "12",
+      "sourceTable": "food_outlet"
+    },
+    {
+      "id": "food_outlet:9:dilys-creation",
+      "type": "venue",
+      "title": "Dilys Creation",
+      "roomName": "Engineering Blk E4",
+      "category": "food_outlet",
+      "categoryLabel": "Food Outlet",
+      "campusName": "Kent Ridge Campus",
+      "placeCode": "",
+      "buildingName": "",
+      "streetName": "Engineering Drive 1",
+      "block": "9",
+      "postal": "117575",
+      "unitNo": "",
+      "coordinates": {
+        "latitude": 1.298474249,
+        "longitude": 103.7722897
+      },
+      "sourceId": "9",
       "sourceTable": "food_outlet"
     },
     {
@@ -7650,27 +7650,6 @@
       "sourceTable": "faculty"
     },
     {
-      "id": "food_outlet:8:good-news-caf",
-      "type": "venue",
-      "title": "Good News CafÃƒÂ©",
-      "roomName": "Engineering Blk EA",
-      "category": "food_outlet",
-      "categoryLabel": "Food Outlet",
-      "campusName": "Kent Ridge Campus",
-      "placeCode": "",
-      "buildingName": "",
-      "streetName": "Engineering Drive 1",
-      "block": "9",
-      "postal": "117576",
-      "unitNo": "",
-      "coordinates": {
-        "latitude": 1.29807,
-        "longitude": 103.77115
-      },
-      "sourceId": "8",
-      "sourceTable": "food_outlet"
-    },
-    {
       "id": "faculty:299:good-news-caf",
       "type": "venue",
       "title": "Good News CafÃƒÂ©",
@@ -7690,6 +7669,27 @@
       },
       "sourceId": "299",
       "sourceTable": "faculty"
+    },
+    {
+      "id": "food_outlet:8:good-news-caf",
+      "type": "venue",
+      "title": "Good News CafÃƒÂ©",
+      "roomName": "Engineering Blk EA",
+      "category": "food_outlet",
+      "categoryLabel": "Food Outlet",
+      "campusName": "Kent Ridge Campus",
+      "placeCode": "",
+      "buildingName": "",
+      "streetName": "Engineering Drive 1",
+      "block": "9",
+      "postal": "117576",
+      "unitNo": "",
+      "coordinates": {
+        "latitude": 1.29807,
+        "longitude": 103.77115
+      },
+      "sourceId": "8",
+      "sourceTable": "food_outlet"
     },
     {
       "id": "faculty:253:graduate-studies-mba-and-emba",
@@ -10065,27 +10065,6 @@
       "sourceTable": "faculty"
     },
     {
-      "id": "room:276:mochtar-riady-building",
-      "type": "venue",
-      "title": "Mochtar Riady Building",
-      "roomName": "Kent Ridge Crescent",
-      "category": "room",
-      "categoryLabel": "Room",
-      "campusName": "Kent Ridge Campus",
-      "placeCode": "",
-      "buildingName": "",
-      "streetName": "Kent Ridge Crescent",
-      "block": "10",
-      "postal": "119260",
-      "unitNo": "",
-      "coordinates": {
-        "latitude": 1.2925,
-        "longitude": 103.7742993
-      },
-      "sourceId": "276",
-      "sourceTable": "room"
-    },
-    {
       "id": "building:50:mochtar-riady-building",
       "type": "venue",
       "title": "Mochtar Riady Building",
@@ -10105,6 +10084,27 @@
       },
       "sourceId": "50",
       "sourceTable": "building"
+    },
+    {
+      "id": "room:276:mochtar-riady-building",
+      "type": "venue",
+      "title": "Mochtar Riady Building",
+      "roomName": "Kent Ridge Crescent",
+      "category": "room",
+      "categoryLabel": "Room",
+      "campusName": "Kent Ridge Campus",
+      "placeCode": "",
+      "buildingName": "",
+      "streetName": "Kent Ridge Crescent",
+      "block": "10",
+      "postal": "119260",
+      "unitNo": "",
+      "coordinates": {
+        "latitude": 1.2925,
+        "longitude": 103.7742993
+      },
+      "sourceId": "276",
+      "sourceTable": "room"
     },
     {
       "id": "faculty:156:moot-court",
@@ -14223,6 +14223,48 @@
       "sourceTable": "room"
     },
     {
+      "id": "faculty:297:starbucks",
+      "type": "venue",
+      "title": "Starbucks",
+      "roomName": "Medical Drive",
+      "category": "faculty",
+      "categoryLabel": "Faculty",
+      "campusName": "Kent Ridge Campus",
+      "placeCode": "FM",
+      "buildingName": "",
+      "streetName": "Medical Drive",
+      "block": "MD11",
+      "postal": "117597",
+      "unitNo": "",
+      "coordinates": {
+        "latitude": 1.295920039,
+        "longitude": 103.7817159
+      },
+      "sourceId": "297",
+      "sourceTable": "faculty"
+    },
+    {
+      "id": "food_outlet:22:starbucks",
+      "type": "venue",
+      "title": "Starbucks",
+      "roomName": "Yusof Ishak House",
+      "category": "food_outlet",
+      "categoryLabel": "Food Outlet",
+      "campusName": "Kent Ridge Campus",
+      "placeCode": "",
+      "buildingName": "",
+      "streetName": "Lower Kent Ridge Road",
+      "block": "31",
+      "postal": "119078",
+      "unitNo": "",
+      "coordinates": {
+        "latitude": 1.298660133,
+        "longitude": 103.7748909
+      },
+      "sourceId": "22",
+      "sourceTable": "food_outlet"
+    },
+    {
       "id": "food_outlet:36:starbucks",
       "type": "venue",
       "title": "Starbucks",
@@ -14263,48 +14305,6 @@
       },
       "sourceId": "65",
       "sourceTable": "food_outlet"
-    },
-    {
-      "id": "food_outlet:22:starbucks",
-      "type": "venue",
-      "title": "Starbucks",
-      "roomName": "Yusof Ishak House",
-      "category": "food_outlet",
-      "categoryLabel": "Food Outlet",
-      "campusName": "Kent Ridge Campus",
-      "placeCode": "",
-      "buildingName": "",
-      "streetName": "Lower Kent Ridge Road",
-      "block": "31",
-      "postal": "119078",
-      "unitNo": "",
-      "coordinates": {
-        "latitude": 1.298660133,
-        "longitude": 103.7748909
-      },
-      "sourceId": "22",
-      "sourceTable": "food_outlet"
-    },
-    {
-      "id": "faculty:297:starbucks",
-      "type": "venue",
-      "title": "Starbucks",
-      "roomName": "Medical Drive",
-      "category": "faculty",
-      "categoryLabel": "Faculty",
-      "campusName": "Kent Ridge Campus",
-      "placeCode": "FM",
-      "buildingName": "",
-      "streetName": "Medical Drive",
-      "block": "MD11",
-      "postal": "117597",
-      "unitNo": "",
-      "coordinates": {
-        "latitude": 1.295920039,
-        "longitude": 103.7817159
-      },
-      "sourceId": "297",
-      "sourceTable": "faculty"
     },
     {
       "id": "facilities:31:stephen-riady-centre",
@@ -15315,27 +15315,6 @@
       "sourceTable": "faculty"
     },
     {
-      "id": "room:358:university-cultural-centre",
-      "type": "venue",
-      "title": "University Cultural Centre",
-      "roomName": "Kent Ridge Crescent",
-      "category": "room",
-      "categoryLabel": "Room",
-      "campusName": "Kent Ridge Campus",
-      "placeCode": "UCC",
-      "buildingName": "",
-      "streetName": "Kent Ridge Crescent",
-      "block": "50",
-      "postal": "119279",
-      "unitNo": "",
-      "coordinates": {
-        "latitude": 1.301728637,
-        "longitude": 103.7721489
-      },
-      "sourceId": "358",
-      "sourceTable": "room"
-    },
-    {
       "id": "building:7:university-cultural-centre",
       "type": "venue",
       "title": "University Cultural Centre",
@@ -15355,6 +15334,27 @@
       },
       "sourceId": "7",
       "sourceTable": "building"
+    },
+    {
+      "id": "room:358:university-cultural-centre",
+      "type": "venue",
+      "title": "University Cultural Centre",
+      "roomName": "Kent Ridge Crescent",
+      "category": "room",
+      "categoryLabel": "Room",
+      "campusName": "Kent Ridge Campus",
+      "placeCode": "UCC",
+      "buildingName": "",
+      "streetName": "Kent Ridge Crescent",
+      "block": "50",
+      "postal": "119279",
+      "unitNo": "",
+      "coordinates": {
+        "latitude": 1.301728637,
+        "longitude": 103.7721489
+      },
+      "sourceId": "358",
+      "sourceTable": "room"
     },
     {
       "id": "building:1:university-hall",

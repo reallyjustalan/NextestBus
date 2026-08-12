@@ -4,6 +4,7 @@
   "scripts": {
     "dev": "npm --prefix project run dev --",
     "test": "npm --prefix project run test --",
+    "refresh:locations": "npm --prefix project run refresh:locations",
     "deploy": "npm --prefix project run deploy --"
   }
 }

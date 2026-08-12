@@ -6,7 +6,8 @@ const INSTALL_PROMPT_DISMISSED_KEY = "nusbus-install-prompt-dismissed";
 const REFRESH_INTERVAL_MS = 30000;
 const FRESHNESS_TICK_MS = 5000;
 const DIRECTIONS_ARRIVALS_MAX_AGE_MS = REFRESH_INTERVAL_MS * 2;
-const LOCATIONS_SOURCE = "https://map.nus.edu.sg/index.php/search/ajax_auto";
+const LOCATIONS_URL = "/data/nus-map-locations.json";
+const NUSMODS_VENUES_URL = "/data/nusmods-venues.json";
 const PULL_REFRESH_THRESHOLD_PX = 72;
 const PULL_REFRESH_MAX_PX = 98;
 const PULL_REFRESH_HOLD_MS = 700;
@@ -166,11 +167,17 @@ async function loadLocations() {
 
   state.isLoadingLocations = true;
   state.locationsLoadPromise = (async () => {
-    const data = await fetchJson(new URL("/api/locations", window.location.origin));
-    if (data.source !== LOCATIONS_SOURCE) {
-      throw new Error("Location dataset is stale. Refresh the app to load the NUS campus map locations.");
+    const [campusData, nusModsData] = await Promise.all([
+      fetchJson(new URL(LOCATIONS_URL, window.location.origin)),
+      fetchJson(new URL(NUSMODS_VENUES_URL, window.location.origin))
+    ]);
+    if (!Array.isArray(campusData.locations) || !campusData.locations.length) {
+      throw new Error("The cached campus location dataset is unavailable.");
     }
-    state.locations = data.locations || [];
+    if (!Array.isArray(nusModsData.locations) || !nusModsData.locations.length) {
+      throw new Error("The cached NUSMods venue dataset is unavailable.");
+    }
+    state.locations = [...campusData.locations, ...nusModsData.locations];
     return state.locations;
   })();
 
