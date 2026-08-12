@@ -29,7 +29,20 @@ GET /api/locations
 
 The upstream `/directions` endpoint exists, but the frontend does not use it for optimal campus routing. It can return a path between selected stops, but it does not reason about walking to nearby or opposite stops, live-arrival tradeoffs, route overlaps, or whether a different boarding stop would be better for a venue-to-venue trip.
 
-The route data can also be embedded inside stop arrival responses, so the app merges service data from `/services/:serviceKey` with service data found while loading stops. `/api/locations` returns the local `project/public/data/nus-map-locations.json` dataset for directions autocomplete and nearest-stop resolution. That file is generated from the NUS campus map autocomplete endpoint at `https://map.nus.edu.sg/index.php/search/ajax_auto`; map-provided bus stop records, lecture theatres, and classroom-like seminar/tutorial records are excluded because the app already loads bus stops from the NUSBus API and directions autocomplete should target campus places rather than class venues.
+The route data can also be embedded inside stop arrival responses, so the app merges service data from `/services/:serviceKey` with service data found while loading stops. Campus places come from two committed snapshots for directions autocomplete and nearest-stop resolution:
+
+- `project/public/data/nus-map-locations.json` contains general campus places from the NUS map.
+- `project/public/data/nusmods-venues.json` contains the union of NUSMods' curated venue map and the venues active in the current semester.
+
+The browser loads both static files directly and the service worker precaches them, so place search keeps working without a live dependency on either source. `/api/locations` remains as a backwards-compatible view of the original NUS map file. NUSMods venues without coordinates are kept locally and remain searchable, but cannot be used as route endpoints until coordinates become available.
+
+Refresh the snapshot from the NUS campus map autocomplete endpoint with:
+
+```bash
+npm run refresh:locations
+```
+
+The refresh script normalizes `https://map.nus.edu.sg/index.php/search/ajax_auto`, NUSMods' curated venue-coordinate map, and the current academic term's NUSMods venue API. The NUS map snapshot excludes its bus stops and class venues because official bus stops come from the NUSBus API and NUSMods provides much broader classroom coverage. The NUSMods data is used under its MIT license; see `project/public/data/NUSMODS-LICENSE.txt`.
 
 ## Project Layout
 
@@ -39,12 +52,15 @@ project/
     index.html              Static app shell
     app.js                  Frontend state, rendering, routing, geolocation, PWA prompt
     directions-planner.js   DOM-free client-side directions planner
+    data/                   Cached campus-place and NUSMods venue snapshots
     styles.css              App styling
     sw.js                   Service worker for PWA shell caching
     manifest.webmanifest    PWA manifest
     icons/                  App icons
   test/
     directions-planner.test.js
+    locations-data.test.js
+  scripts/                  Location snapshot refresh tooling
   src/
     index.js                Cloudflare Worker proxy and static asset handler
   wrangler.toml             Cloudflare configuration

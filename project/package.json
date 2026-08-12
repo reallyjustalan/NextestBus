@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "test": "node --test test/*.test.js",
+    "refresh:locations": "node scripts/refresh-locations.mjs",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
