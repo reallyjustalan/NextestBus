@@ -1,10 +1,10 @@
-# NUS Nextest Bus
+# Nextest Bus
 
 <p align="center">
-  <img src="project/public/icons/icon.svg" width="160" alt="NUS Nextest Bus icon">
+  <img src="project/public/icons/icon.svg" width="160" alt="Nextest Bus icon">
 </p>
 
-A minimal, accessibility-oriented NUS Nextest Bus web app. It lists every stop up front, lets users pin stops, opens arrival timings inline, and shows NUS shuttle routes as simple ordered stop timelines.
+An elegant NextBus replacement for NUS buses. It lists every stop up front, lets users pin stops, opens arrival timings inline, and shows NUS shuttle routes as simple ordered stop timelines.
 
 The app is designed to be installable as a PWA so mobile users can add it to their home screen and use it like a small bus app.
 

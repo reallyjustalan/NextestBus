@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
-  <title id="title">NUS Nextest Bus</title>
+  <title id="title">Nextest Bus</title>
   <desc id="desc">A teal bus app icon with a shared N for NUS and NB.</desc>
   <rect width="512" height="512" rx="104" fill="#0f766e"/>
   <rect x="28" y="28" width="456" height="456" rx="82" fill="none" stroke="#58bbb2" stroke-width="10" opacity=".55"/>

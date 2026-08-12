@@ -1,7 +1,7 @@
 {
-  "name": "NUS Nextest Bus",
-  "short_name": "NUS Nextest Bus",
-  "description": "A minimal NUS Nextest Bus viewer.",
+  "name": "Nextest Bus",
+  "short_name": "Nextest Bus",
+  "description": "An elegant NextBus replacement for NUS buses!",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
