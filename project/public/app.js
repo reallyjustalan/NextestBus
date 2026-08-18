@@ -1220,6 +1220,9 @@ async function suggestNearbyDirectionsItems() {
     return;
   }
 
+  // This button belongs to the From control, so its suggestions must not be
+  // redirected to To just because that input happened to be focused last.
+  state.activeDirectionsField = "from";
   elements.directionsCurrentLocationButton.disabled = true;
   elements.directionsCurrentLocationButton.classList.add("is-loading");
   state.directionsError = "";
@@ -1239,6 +1242,7 @@ async function suggestNearbyDirectionsItems() {
       renderDirectionsResult();
       return;
     }
+    state.activeDirectionsField = "from";
     elements.directionsSuggestions.hidden = false;
     elements.directionsSuggestions.replaceChildren(...suggestions.map(renderDirectionSuggestion));
     elements.directionsResult.replaceChildren();
