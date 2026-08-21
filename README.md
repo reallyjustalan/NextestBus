@@ -611,7 +611,7 @@ REFRESH_INTERVAL_MS = 30000
 FRESHNESS_TICK_MS = 5000
 ```
 
-Every 30 seconds, the app refreshes visible live data:
+Every 30 seconds, the app refreshes visible live data. Users can also refresh the same data manually from the header, by pulling down on a touch device, or with the floating thumb-reachable button on mobile:
 
 - if a stop card is open, it refreshes that stop
 - if a route is open, it refreshes the active route and its per-stop timings

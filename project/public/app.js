@@ -78,6 +78,7 @@ const elements = {
   homeButton: document.getElementById("homeButton"),
   logo: document.querySelector(".logo"),
   refreshButton: document.getElementById("refreshButton"),
+  mobileRefreshButton: document.getElementById("mobileRefreshButton"),
   pullRefreshIndicator: document.getElementById("pullRefreshIndicator"),
   mainPageHeaderLink: document.getElementById("mainPageHeaderLink"),
   busesHeaderLink: document.getElementById("busesHeaderLink"),
@@ -2819,10 +2820,11 @@ function updateStatus() {
 }
 
 function updateRefreshUi() {
-  if (!elements.refreshButton) return;
-  elements.refreshButton.disabled = state.isRefreshing;
-  elements.refreshButton.classList.toggle("is-refreshing", state.isRefreshing);
-  elements.refreshButton.setAttribute("aria-label", state.isRefreshing ? "Refreshing arrival data" : "Refresh arrival data");
+  [elements.refreshButton, elements.mobileRefreshButton].filter(Boolean).forEach((button) => {
+    button.disabled = state.isRefreshing;
+    button.classList.toggle("is-refreshing", state.isRefreshing);
+    button.setAttribute("aria-label", state.isRefreshing ? "Refreshing arrival data" : "Refresh arrival data");
+  });
 }
 
 function loadPinnedStopIds() {
@@ -3116,6 +3118,7 @@ elements.searchInput.addEventListener("input", handleSearchInput);
 elements.locationButton.addEventListener("click", useBrowserLocation);
 elements.homeButton.addEventListener("click", resetBrowsingExperience);
 elements.refreshButton.addEventListener("click", handleManualRefresh);
+elements.mobileRefreshButton?.addEventListener("click", handleManualRefresh);
 elements.mainPageHeaderLink.addEventListener("click", resetBrowsingExperience);
 elements.busesHeaderLink.addEventListener("click", () => {
   openBusesView({ pushHistory: !isBusesHash() });

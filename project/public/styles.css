@@ -152,8 +152,51 @@ p {
 }
 
 .refresh-button.is-refreshing svg,
+.mobile-refresh-button.is-refreshing svg,
 .pull-refresh-indicator.is-refreshing svg {
   animation: refreshSpin 800ms linear infinite;
+}
+
+.mobile-refresh-button {
+  position: fixed;
+  right: calc(18px + env(safe-area-inset-right, 0px));
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  z-index: 4;
+  display: none;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  padding: 0;
+  box-shadow: 0 8px 24px rgba(21, 50, 46, 0.22);
+}
+
+.mobile-refresh-button:hover,
+.mobile-refresh-button:focus {
+  border-color: var(--accent-dark);
+  background: var(--accent-dark);
+}
+
+.mobile-refresh-button:active {
+  transform: translateY(1px);
+}
+
+.mobile-refresh-button:disabled {
+  cursor: wait;
+  opacity: 0.82;
+}
+
+.mobile-refresh-button svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .pull-refresh-indicator {
@@ -2003,9 +2046,14 @@ button:focus {
     display: inline-flex;
   }
 
+  .mobile-refresh-button {
+    display: grid;
+  }
+
   .app {
     width: min(100% - 20px, 960px);
     padding-top: 10px;
+    padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
   }
 
   .app-header {
